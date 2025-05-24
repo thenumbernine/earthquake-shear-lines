@@ -59,6 +59,7 @@ eqdata:setColumnNames(eqdata.rows:remove(1))
 
 local App = require 'imgui.appwithorbit'()
 App.title = 'Earthquake Geodesics'
+App.viewDist = 2
 App.initGL = [:] do
 	App.super.initGL(self)
 	self.view.ortho = true
@@ -108,6 +109,7 @@ App.initGL = [:] do
 
 layout(location=0) in vec2 vertex;
 out vec2 texcoordv;
+out vec3 posv;
 
 uniform mat4 mvProjMat;
 
@@ -137,6 +139,7 @@ void main() {
 	if (chartIs3D) {
 		pos = vec3(pos.z, pos.x, pos.y);
 	}
+	posv = pos;
 
 	// lets see the grid over it
 	pos *= .99;
@@ -157,12 +160,15 @@ layout (triangle_strip, max_vertices = 3) out;
 in vec2 texcoordv[];
 out vec2 texcoordg;
 
+in vec3 posv[];
+
 void main() {
-	vec3 dlon = vec3(
-		abs(texcoordv[1].x - texcoordv[0].x),
-		abs(texcoordv[2].x - texcoordv[1].x),
-		abs(texcoordv[0].x - texcoordv[2].x));
-	if (dlon.x > .5 || dlon.y > .5 || dlon.z > .5) {
+	vec3 dlen = vec3(
+		length(posv[1] - posv[0]),
+		length(posv[2] - posv[1]),
+		length(posv[0] - posv[2]));
+	if (dlen.x > .25 || dlen.y > .25 || dlen.z > .25) 
+	{
 		return;
 	}
 	
@@ -214,10 +220,10 @@ void main() {
 			}:unbind(),
 		},
 		uniforms = {
-			weight_Equirectangular = 0,
+			weight_Equirectangular = 1,
 			weight_Azimuthal_equidistant = 0,
 			weight_Mollweide = 0,
-			weight_WGS84 = 1,
+			weight_WGS84 = 0,
 		},
 	}
 	--]=====] END CLIP FROM GEOGRAPHIC-CHARTS
@@ -344,14 +350,12 @@ uniform bool chartIs3D;
 //////// END CODE MATCHING CHART CODE ABOVE
 
 layout(location=1) in vec4 color;
-out vec2 latlonv;
+out vec3 posv;
 out vec4 colorv;
 void main() {
 	colorv = color;
 
 	//////// BEGIN CODE MATCHING CHART CODE ABOVE
-	latlonv = vertex;
-
 	vec3 coords = vec3(
 		(vertex.y - .5) * 180.,	// lat in deg, [-90, 90]
 		(vertex.x - .5) * 360.,	// lon in deg, [-180, 180]
@@ -369,8 +373,8 @@ void main() {
 	if (chartIs3D) {
 		pos = vec3(pos.z, pos.x, pos.y);
 	}
+	posv = pos;
 	gl_Position = mvProjMat * vec4(pos, 1.);
-
 	//////// END CODE MATCHING CHART CODE ABOVE
 }
 ]],		{
@@ -388,12 +392,12 @@ layout (lines) in;
 layout (line_strip, max_vertices = 2) out;
 
 in vec4 colorv[];
-in vec2 latlonv[];
+in vec3 posv[];
 out vec4 colorg;
 
 void main() {
-	float dlon = abs(latlonv[1].x - latlonv[0].x);
-	if (dlon > .5) {
+	float dlen = length(posv[1] - posv[0]);
+	if (dlen > .25) {
 		return;
 	}
 
@@ -627,7 +631,7 @@ end
 
 local weightFields = chartCNames:mapi([name] 'weight_'..name)
 local vars = table(
-	weightFields:mapi([name] (name == 'weight_WGS84' and 1 or 0, name)),
+	weightFields:mapi([name] (name == 'weight_Equirectangular' and 1 or 0, name)),
 	{
 		normalizeWeights = true,
 		drawEarth = true,
