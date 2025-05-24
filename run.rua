@@ -30,16 +30,7 @@ end
 
 local chartCNames = charts:mapi([chart] chart:getCName())
 local chartCode = require 'geographic-charts.code'(charts)
-	:gsub(
-		string.patescape'const float Equirectangular_lambda0 = 0.',
-		'uniform float Equirectangular_lambda0'
-	)
-	:gsub(
-		string.patescape'(-Equirectangular_lambda0 + (latLonHeight.y * M_PI) / 180.)',
-		'((mod((-Equirectangular_lambda0 + (latLonHeight.y * M_PI) / 180.) / M_PI + 1., 2.) - 1.) * M_PI)'
-	)
---..'\n#error here'
---]=======] 
+--]=======]
 
 
 -- [=======[ download data
@@ -55,7 +46,7 @@ else
 end
 local eqdata = assert(require 'csv'.string(datastr))
 eqdata:setColumnNames(eqdata.rows:remove(1))
---]=======] 
+--]=======]
 
 local App = require 'imgui.appwithorbit'()
 App.title = 'Earthquake Geodesics'
@@ -106,26 +97,27 @@ App.initGL = [:] do
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
-<?=chartCode?>
-
 layout(location=0) in vec2 vertex;
 out vec2 texcoordv;
 out vec3 posv;
 
 uniform mat4 mvProjMat;
+uniform bool chartIs3D;
+uniform vec2 latlon0;
+
+<?=chartCode?>
 
 <? for _,name in ipairs(chartCNames) do
 ?>uniform float weight_<?=name?>;
 <? end
 ?>
-uniform bool chartIs3D;
 
 void main() {
 	texcoordv = vertex;	//(lon, lat) in [0, 1]
 
 	vec3 coords = vec3(
-		(vertex.y - .5) * 180.,		// lat in deg, [-90, 90]
-		(vertex.x - .5) * 360.,		// lon in deg, [-180, 180]
+		mod(vertex.y * 180. - latlon0.y, 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vertex.x * 360. - latlon0.x, 360.) - 180.,	// lon in deg, [-180, 180]
 		0.);						// height in meters
 
 	vec3 pos = 0.
@@ -152,7 +144,7 @@ void main() {
 				chartCode = chartCode,
 				chartCNames = chartCNames,
 			}),
-			
+
 -- [=[
 		geometryCode = [[
 layout (triangles) in;
@@ -168,11 +160,11 @@ void main() {
 		length(posv[1] - posv[0]),
 		length(posv[2] - posv[1]),
 		length(posv[0] - posv[2]));
-	if (dlen.x > .25 || dlen.y > .25 || dlen.z > .25) 
+	if (dlen.x > .25 || dlen.y > .25 || dlen.z > .25)
 	{
 		return;
 	}
-	
+
 	gl_Position = gl_in[0].gl_Position;
 	texcoordg = texcoordv[0];
 	EmitVertex();
@@ -180,7 +172,7 @@ void main() {
 	gl_Position = gl_in[1].gl_Position;
 	texcoordg = texcoordv[1];
 	EmitVertex();
-	
+
 	gl_Position = gl_in[2].gl_Position;
 	texcoordg = texcoordv[2];
 	EmitVertex();
@@ -236,26 +228,27 @@ void main() {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
-<?=chartCode?>
-
 layout(location=0) in vec2 vertex;
 layout(location=1) in vec2 texcoord;
 out vec2 texcoordv;
 
 uniform mat4 mvProjMat;
+uniform bool chartIs3D;
+uniform vec2 latlon0;
+
+<?=chartCode?>
 
 <? for _,name in ipairs(chartCNames) do
 ?>uniform float weight_<?=name?>;
 <? end
 ?>
-uniform bool chartIs3D;
 
 void main() {
 	texcoordv = texcoord;
 
 	vec3 coords = vec3(
-		(vertex.y - .5) * 180.,	// lat in deg, [-90, 90]
-		(vertex.x - .5) * 360.,	// lon in deg, [-180, 180]
+		mod(vertex.y * 180. - latlon0.y, 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vertex.x * 360. - latlon0.x, 360.) - 180.,	// lon in deg, [-180, 180]
 		1e+3);					// height in meters
 
 	vec3 pos = 0.
@@ -300,7 +293,7 @@ void main() {
 		},
 	}
 	-- TODO .useVec with .data ... atm it just overwrites .data
-	
+
 	local quadVtxs = {
 		{0, 0},
 		{1, 0},
@@ -335,31 +328,31 @@ void main() {
 		version = 'latest',
 		precision = 'best',
 		vertexCode = template([[
+layout(location=0) in vec2 vertex;
+layout(location=1) in vec4 color;
+out vec3 posv;
+out vec4 colorv;
+uniform mat4 mvProjMat;
+uniform bool chartIs3D;
+uniform vec2 latlon0;
+
 //////// BEGIN CODE MATCHING CHART CODE ABOVE
 <?=chartCode?>
-
-layout(location=0) in vec2 vertex;
-
-uniform mat4 mvProjMat;
 
 <? for _,name in ipairs(chartCNames) do
 ?>uniform float weight_<?=name?>;
 <? end
 ?>
-uniform bool chartIs3D;
 
 //////// END CODE MATCHING CHART CODE ABOVE
 
-layout(location=1) in vec4 color;
-out vec3 posv;
-out vec4 colorv;
 void main() {
 	colorv = color;
 
 	//////// BEGIN CODE MATCHING CHART CODE ABOVE
 	vec3 coords = vec3(
-		(vertex.y - .5) * 180.,	// lat in deg, [-90, 90]
-		(vertex.x - .5) * 360.,	// lon in deg, [-180, 180]
+		mod(vertex.y * 180. - latlon0.y, 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vertex.x * 360. - latlon0.x, 360.) - 180.,	// lon in deg, [-180, 180]
 		2e+3);						// height in meters
 
 	vec3 pos = 0.
@@ -462,18 +455,37 @@ void main() {
 		return v
 	end
 
+	pairCrossPointsObj = GLSceneObject{
+		program = GLProgram.make{vertex = 'vec3', color = {1,1,1,1}},
+		geometry = {
+			mode = gl.GL_POINTS,
+		},
+		vertexes = {
+			dim = 3,
+			useVec = true,
+		},
+	}
+	local pairCrossPoints = pairCrossPointsObj.attrs.vertex.buffer.vec
+
 	circles = table()
 	for i1=1,#eqdata.rows-1 do
 		for i2=i1+1,#eqdata.rows do
 			local v1 = pointToXYZ(eqdata.rows[i1])
 			local v2 = pointToXYZ(eqdata.rows[i2])
 			local axis = v1:cross(v2):normalize()
+
+			-- hmmmmm
+			-- if ponits are 180' or if they are next to each other then we want no infuence ...
+			-- ... .maybe I souldn't nrmlize with the cross produt ...
+			-- and then I should look at the point-cloud of the axis' ...
+			pairCrossPoints:emplace_back():set(v1:cross(v2):unpack())
+
 			local angle = math.acos(v1:dot(v2))
 			if math.rad(15) < angle and angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
 				circles:insert{
 					axis = axis,
 					angle = math.pi * .5,
-					color = vec3d(1, 0, 0),
+					color = vec3d(1, .3, .07),
 					centerPos = (v1 + v2):normalize(),	-- midpoint between two earthquake lines
 					centerAngle = .5 * angle,	-- half the angle between them
 				}
@@ -481,14 +493,16 @@ void main() {
 		end
 	end
 
+	pairCrossPointsObj:endUpdate()
+
 	self:updateGrid()
 end
 
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
 local basisFor = [v] do
-	local x = v:cross(vec3d(1,0,0))
-	local y = v:cross(vec3d(0,1,0))
-	local z = v:cross(vec3d(0,0,1))
+	local x = v:cross(vec3d(1, 0, 0))
+	local y = v:cross(vec3d(0, 1, 0))
+	local z = v:cross(vec3d(0, 0, 1))
 	local xl = x:lenSq()
 	local yl = y:lenSq()
 	local zl = z:lenSq()
@@ -639,8 +653,9 @@ local vars = table(
 		drawEarthquakes = true,
 		drawGreatArcs = true,
 		greatArcAlpha = .25,
-	
-		Equirectangular_lambda0 = math.pi,
+		lineWidth = 4,
+		lat0 = 0,	-- degrees
+		lon0 = 180,	-- degrees
 	}
 ):setmetatable(nil)
 
@@ -653,7 +668,7 @@ App.update = [:] do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
-		sceneObj.uniforms.Equirectangular_lambda0 = vars.Equirectangular_lambda0
+		sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj:draw()
@@ -666,8 +681,8 @@ App.update = [:] do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
-		sceneObj.uniforms.Equirectangular_lambda0 = vars.Equirectangular_lambda0
-		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole	
+		sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
+		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj:draw()
 		--]=====] END EARTHQUAKES
@@ -679,19 +694,22 @@ App.update = [:] do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
-		sceneObj.uniforms.Equirectangular_lambda0 = vars.Equirectangular_lambda0
+		sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.alpha = vars.greatArcAlpha
-		--gl.glLineWidth(4)
+gl.glLineWidth(vars.lineWidth)
 gl.glEnable(gl.GL_BLEND)
 gl.glDepthMask(0)
 		sceneObj:draw()
 gl.glDepthMask(1)
 gl.glDisable(gl.GL_BLEND)
-		--gl.glLineWidth(1)
+gl.glLineWidth(1)
 		--]=====] END COPY FROM EARTH TRANSPORT NETWORK
 	end
+
+	pairCrossPointsObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+	pairCrossPointsObj:draw()
 
 	App.super.update(self)
 end
@@ -706,8 +724,10 @@ App.updateGUI = [:] do
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
 			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
-			
-			ig.luatableSliderFloat('Equirectangular_lambda0', vars, 'Equirectangular_lambda0', -math.pi, math.pi)
+			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
+
+			ig.luatableSliderFloat('lat0', vars, 'lat0', -90, 90)
+			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
 			ig.luatableCheckbox('normalize weights', vars, 'normalizeWeights')
 			local changed
 			for _,field in ipairs(weightFields) do
