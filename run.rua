@@ -63,6 +63,7 @@ App.viewDist = 2
 App.initGL = [:] do
 	App.super.initGL(self)
 	self.view.ortho = true
+	self.view.orthoSize = 3
 	-- [=====[ BEGIN CLIP FROM GEOGRAPHIC-CHARTS
 	local vertexes = table()
 	local idivs = 100
@@ -468,7 +469,7 @@ void main() {
 			local v2 = pointToXYZ(eqdata.rows[i2])
 			local axis = v1:cross(v2):normalize()
 			local angle = math.acos(v1:dot(v2))
-			if angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
+			if math.rad(15) < angle and angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
 				circles:insert{
 					axis = axis,
 					angle = math.pi * .5,
