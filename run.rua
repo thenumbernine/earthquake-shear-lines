@@ -27,9 +27,20 @@ end
 for _,name in ipairs(chartNames) do
 	charts[name]?:build()
 end
+
 local chartCNames = charts:mapi([chart] chart:getCName())
 local chartCode = require 'geographic-charts.code'(charts)
+	:gsub(
+		string.patescape'const float Equirectangular_lambda0 = 0.',
+		'uniform float Equirectangular_lambda0'
+	)
+	:gsub(
+		string.patescape'(-Equirectangular_lambda0 + (latLonHeight.y * M_PI) / 180.)',
+		'((mod((-Equirectangular_lambda0 + (latLonHeight.y * M_PI) / 180.) / M_PI + 1., 2.) - 1.) * M_PI)'
+	)
+--..'\n#error here'
 --]=======] 
+
 
 -- [=======[ download data
 local datafn = path'latest.csv'
@@ -71,11 +82,11 @@ App.initGL = [:] do
 	}:unbind()
 
 	local geometries = table()
-	for ibase=0,idivs-1 do
+	for jbase=0,jdivs-1 do
 		local indexes = table()
-		for j=0,jdivs do
-			for iofs=1,0,-1 do
-				local i = ibase + iofs
+		for i=0,idivs do
+			for jofs=1,0,-1 do
+				local j = jbase + jofs
 				indexes:insert(j + (jdivs + 1) * i)
 			end
 		end
@@ -107,11 +118,11 @@ uniform mat4 mvProjMat;
 uniform bool chartIs3D;
 
 void main() {
-	texcoordv = vertex;	//(lat, lon) in [0, 1]
+	texcoordv = vertex;	//(lon, lat) in [0, 1]
 
 	vec3 coords = vec3(
-		(vertex.y - .5) * 180.,	// lat in deg, [-90, 90]
-		(vertex.x - .5) * 360.,	// lon in deg, [-180, 180]
+		(vertex.y - .5) * 180.,		// lat in deg, [-90, 90]
+		(vertex.x - .5) * 360.,		// lon in deg, [-180, 180]
 		0.);						// height in meters
 
 	vec3 pos = 0.
@@ -137,15 +148,51 @@ void main() {
 				chartCode = chartCode,
 				chartCNames = chartCNames,
 			}),
+			
+-- [=[
+		geometryCode = [[
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
+
+in vec2 texcoordv[];
+out vec2 texcoordg;
+
+void main() {
+	vec3 dlon = vec3(
+		abs(texcoordv[1].x - texcoordv[0].x),
+		abs(texcoordv[2].x - texcoordv[1].x),
+		abs(texcoordv[0].x - texcoordv[2].x));
+	if (dlon.x > .5 || dlon.y > .5 || dlon.z > .5) {
+		return;
+	}
+	
+	gl_Position = gl_in[0].gl_Position;
+	texcoordg = texcoordv[0];
+	EmitVertex();
+
+	gl_Position = gl_in[1].gl_Position;
+	texcoordg = texcoordv[1];
+	EmitVertex();
+	
+	gl_Position = gl_in[2].gl_Position;
+	texcoordg = texcoordv[2];
+	EmitVertex();
+
+	EndPrimitive();
+}
+]],
+--]=]
+
+
 			fragmentCode = template([[
-in vec2 texcoordv;
+in vec2 texcoordg;
 out vec4 fragColor;
 
 uniform sampler2D earthTex;
 uniform float alpha;
 
 void main() {
-	fragColor = texture(earthTex, vec2(texcoordv.x, 1. - texcoordv.y));
+	fragColor = texture(earthTex, vec2(texcoordg.x, 1. - texcoordg.y));
 	fragColor.a = alpha;
 }
 ]],			{
@@ -345,8 +392,10 @@ in vec2 latlonv[];
 out vec4 colorg;
 
 void main() {
-	float dlatlon = abs(latlonv[0].x - latlonv[1].x);
-	if (dlatlon > .5) return;	// if we jump half way across the globe at once then just skip this line.
+	float dlon = abs(latlonv[1].x - latlonv[0].x);
+	if (dlon > .5) {
+		return;
+	}
 
 	gl_Position = gl_in[0].gl_Position;
 	colorg = colorv[0];
@@ -584,7 +633,9 @@ local vars = table(
 		drawEarth = true,
 		drawEarthquakes = true,
 		drawGreatArcs = true,
-		greatArcAlpha = 1,
+		greatArcAlpha = .25,
+	
+		Equirectangular_lambda0 = math.pi,
 	}
 ):setmetatable(nil)
 
@@ -597,6 +648,7 @@ App.update = [:] do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
+		sceneObj.uniforms.Equirectangular_lambda0 = vars.Equirectangular_lambda0
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj:draw()
@@ -609,6 +661,7 @@ App.update = [:] do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
+		sceneObj.uniforms.Equirectangular_lambda0 = vars.Equirectangular_lambda0
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole	
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj:draw()
@@ -621,6 +674,7 @@ App.update = [:] do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
+		sceneObj.uniforms.Equirectangular_lambda0 = vars.Equirectangular_lambda0
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.alpha = vars.greatArcAlpha
@@ -647,7 +701,8 @@ App.updateGUI = [:] do
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
 			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
-
+			
+			ig.luatableSliderFloat('Equirectangular_lambda0', vars, 'Equirectangular_lambda0', -math.pi, math.pi)
 			ig.luatableCheckbox('normalize weights', vars, 'normalizeWeights')
 			local changed
 			for _,field in ipairs(weightFields) do
