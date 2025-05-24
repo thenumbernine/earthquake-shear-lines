@@ -177,25 +177,51 @@ void main() {
 		program = {
 			version = 'latest',
 			precision = 'best',
-			vertexCode = [[
-in vec3 vertex;
-in vec2 texcoord;
-out vec2 tcv;
-out float red;
+			vertexCode = template([[
+<?=chartCode?>
+
+layout(location=0) in vec2 vertex;
+layout(location=1) in vec2 texcoord;
+out vec2 texcoordv;
+
 uniform mat4 mvProjMat;
+
+<? for _,name in ipairs(chartCNames) do
+?>uniform float weight_<?=name?>;
+<? end
+?>
+uniform bool chartIs3D;
+
 void main() {
-	tcv = texcoord;
-	red = gl_VertexID < 6 ? 1. : 0.;
-	gl_Position = mvProjMat * vec4(vertex, 1.);
+	texcoordv = texcoord;
+
+	vec3 coords = vec3(
+		(vertex.y - .5) * 180.,	// lat in deg, [-90, 90]
+		(vertex.x - .5) * 360.,	// lon in deg, [-180, 180]
+		1e+3);					// height in meters
+
+	vec3 pos = 0.
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>(coords)
+<? end
+?>	;
+	pos /= WGS84_a;	//from meters to normalized coordinates
+	if (chartIs3D) {
+		pos = vec3(pos.z, pos.x, pos.y);
+	}
+	gl_Position = mvProjMat * vec4(pos, 1.);
 }
-]],
+
+]], 		{
+				chartCode = chartCode,
+				chartCNames = chartCNames,
+			}),
 			fragmentCode = [[
-in vec2 tcv;
-in float red;
+in vec2 texcoordv;
 out vec4 fragColor;
 void main() {
-	if (dot(tcv,tcv) > 1.) discard;
-	fragColor = vec4(1., .5 * (1. - red), 0., 1.);
+	if (dot(texcoordv,texcoordv) > 1.) discard;
+	fragColor = vec4(1., .5, 0., 1.);
 }
 ]],
 		},
@@ -203,7 +229,7 @@ void main() {
 			mode = gl.GL_TRIANGLES,
 		},
 		vertexes = {
-			dim = 3,
+			dim = 2,
 			useVec = true,
 		},
 		attrs = {
@@ -225,30 +251,7 @@ void main() {
 		{1, 0},
 		{1, 1}
 	}
-	local pointSize = .05
-	local vec2f = require 'vec-ffi.vec2f'
-	local vec3f = require 'vec-ffi.vec3f'
-	local rotateX = [v, theta] do
-		local c, s = math.cos(theta), math.sin(theta) 
-		return vec3f(
-			v.x,
-			v.y * c - v.z * s,
-			v.y * s + v.z * c)
-	end
-	local rotateY = [v, theta] do
-		local c, s = math.cos(theta), math.sin(theta) 
-		return vec3f(
-			v.x * c + v.z * s,
-			v.y,
-			v.x * s - v.z * c)
-	end
-	local rotateZ = [v, theta] do
-		local c, s = math.cos(theta), math.sin(theta) 
-		return vec3f(
-			v.x * c - v.y * s,
-			v.x * s + v.y * c,
-			v.z)
-	end
+	local pointSize = .01
 	local vertexGPU = self.eqObj.attrs.vertex.buffer
 	local vertexCPU = vertexGPU:beginUpdate()
 	local texcoordGPU = self.eqObj.attrs.texcoord.buffer
@@ -258,10 +261,10 @@ void main() {
 		-- longitude: W = negative, E = positive
 		print(i, row.latitude, row.longitude)
 		for _,v in ipairs(quadVtxs) do
-			local earthPos = vec3f(pointSize * v[1], pointSize * v[2], 1)	-- z+ is default
-			earthPos = rotateX(earthPos, -math.rad(row.latitude))
-			earthPos = rotateY(earthPos, math.pi - math.rad(row.longitude))
-			vertexCPU:emplace_back()[0]:set(earthPos:unpack())
+			vertexCPU:emplace_back()[0]:set(
+				(row.longitude + 180) / 360 + .5 * pointSize * (v[1] * 2 - 1),
+				(row.latitude + 90) / 180 + pointSize * (v[2] * 2 - 1)
+			)
 			texcoordCPU:emplace_back()[0]:set(v[1] * 2 - 1, v[2] * 2 - 1)
 		end
 	end
@@ -300,6 +303,10 @@ App.update = [:] do
 	if vars.drawEarthquakes then
 		-- [=====[ BEGIN BEARTHQUAKES
 		local sceneObj = self.eqObj
+		for _,name in ipairs(weightFields) do
+			sceneObj.uniforms[name] = vars[name]
+		end
+		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole	
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj:draw()
 		--]=====] END EARTHQUAKES
