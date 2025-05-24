@@ -709,7 +709,9 @@ gl.glLineWidth(1)
 	end
 
 	pairCrossPointsObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+	gl.glPointSize(3)
 	pairCrossPointsObj:draw()
+	gl.glPointSize(1)
 
 	App.super.update(self)
 end
