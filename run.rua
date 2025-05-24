@@ -3,9 +3,12 @@ local template = require 'template'
 local gl = require 'gl'
 local GLSceneObject = require 'gl.sceneobject'
 local GLArrayBuffer = require 'gl.arraybuffer'
+local GLProgram = require 'gl.program'
 local GLGeometry = require 'gl.geometry'
 local GLTex2D = require 'gl.tex2d'
 local ig = require 'imgui'
+local vec2d = require 'vec-ffi.vec2d'
+local vec3d = require 'vec-ffi.vec3d'
 
 -- [=======[ TODO cache calcs somehow
 local allCharts = require 'geographic-charts'
@@ -44,9 +47,10 @@ eqdata:setColumnNames(eqdata.rows:remove(1))
 --]=======] 
 
 local App = require 'imgui.appwithorbit'()
+App.title = 'Earthquake Geodesics'
 App.initGL = [:] do
 	App.super.initGL(self)
-
+	self.view.ortho = true
 	-- [=====[ BEGIN CLIP FROM GEOGRAPHIC-CHARTS
 	local vertexes = table()
 	local idivs = 100
@@ -259,7 +263,7 @@ void main() {
 	for i,row in ipairs(eqdata.rows) do
 		-- latitude: S = negative, N = positive
 		-- longitude: W = negative, E = positive
-		print(i, row.latitude, row.longitude)
+--print(i, row.latitude, row.longitude)
 		for _,v in ipairs(quadVtxs) do
 			vertexCPU:emplace_back()[0]:set(
 				(row.longitude + 180) / 360 + .5 * pointSize * (v[1] * 2 - 1),
@@ -272,8 +276,305 @@ void main() {
 	texcoordGPU:endUpdate()
 	--]=====] END EARTHQUAKES
 
+	-- [=====[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
+	self.circlesShader= GLProgram{
+		version = 'latest',
+		precision = 'best',
+		vertexCode = template([[
+//////// BEGIN CODE MATCHING CHART CODE ABOVE
+<?=chartCode?>
+
+layout(location=0) in vec2 vertex;
+
+uniform mat4 mvProjMat;
+
+<? for _,name in ipairs(chartCNames) do
+?>uniform float weight_<?=name?>;
+<? end
+?>
+uniform bool chartIs3D;
+
+//////// END CODE MATCHING CHART CODE ABOVE
+
+layout(location=1) in vec4 color;
+out vec2 latlonv;
+out vec4 colorv;
+void main() {
+	colorv = color;
+
+	//////// BEGIN CODE MATCHING CHART CODE ABOVE
+	latlonv = vertex;
+
+	vec3 coords = vec3(
+		(vertex.y - .5) * 180.,	// lat in deg, [-90, 90]
+		(vertex.x - .5) * 360.,	// lon in deg, [-180, 180]
+		2e+3);						// height in meters
+
+	vec3 pos = 0.
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>(coords)
+<? end
+?>	;
+
+	//from meters to normalized coordinates
+	pos /= WGS84_a;
+
+	if (chartIs3D) {
+		pos = vec3(pos.z, pos.x, pos.y);
+	}
+	gl_Position = mvProjMat * vec4(pos, 1.);
+
+	//////// END CODE MATCHING CHART CODE ABOVE
+}
+]],		{
+			chartCode = chartCode,
+			chartCNames = chartCNames,
+		}),
+
+-- [=[ but really just don't use this, just cull the vertexes in the array buffer
+-- then again, this does let me split up line loops.
+		-- lets see if we can hide lines that loop from lon=-180 to lon=+180 and go across the equirectangular/mollweide/most 2D projections
+		-- TODO I could use this for the circle tesselation to begin with.  just pass the angle + axis.
+		-- TODO TODO once I do that, I could also just do the cartesian-to-wgs84 in the fragment, then apply the charts in the fragment.
+		geometryCode = [[
+layout (lines) in;
+layout (line_strip, max_vertices = 2) out;
+
+in vec4 colorv[];
+in vec2 latlonv[];
+out vec4 colorg;
+
+void main() {
+	float dlatlon = abs(latlonv[0].x - latlonv[1].x);
+	if (dlatlon > .5) return;	// if we jump half way across the globe at once then just skip this line.
+
+	gl_Position = gl_in[0].gl_Position;
+	colorg = colorv[0];
+	EmitVertex();
+
+	gl_Position = gl_in[1].gl_Position;
+	colorg = colorv[1];
+	EmitVertex();
+
+	EndPrimitive();
+}
+]],
+--]=]
+		fragmentCode = [[
+in vec4 colorg;		// using geometry shader
+//in vec4 colorv;	// not using geometry shader
+out vec4 fragColor;
+uniform float alpha;
+void main() {
+	fragColor = colorg;
+	//fragColor = colorv;
+	fragColor.a *= alpha;
+}
+]],
+	}:useNone()
+	--]=====] END COPY FROM EARTH TRANSPORT NETWORK
+
+
+
 	gl.glEnable(gl.GL_DEPTH_TEST)
+	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE) --gl.GL_ONE_MINUS_SRC_ALPHA)
+
+
+	local rotateX = [v, theta] do
+		local c, s = math.cos(theta), math.sin(theta)
+		return vec3d(
+			v.x,
+			v.y * c - v.z * s,
+			v.y * s + v.z * c)
+	end
+	local rotateY = [v, theta] do
+		local c, s = math.cos(theta), math.sin(theta)
+		return vec3d(
+			v.x * c + v.z * s,
+			v.y,
+			v.x * s - v.z * c)
+	end
+	local rotateZ = [v, theta] do
+		local c, s = math.cos(theta), math.sin(theta)
+		return vec3d(
+			v.x * c - v.y * s,
+			v.x * s + v.y * c,
+			v.z)
+	end
+	local pointToXYZ = [row] do
+		local v = vec3d(0, 0, 1)   -- z+ is default
+		v = rotateX(v, -math.rad(row.latitude))
+		v = rotateY(v, math.pi - math.rad(row.longitude))
+		return v
+	end
+
+	circles = table()
+	for i1=1,#eqdata.rows-1 do
+		for i2=i1+1,#eqdata.rows do
+			local v1 = pointToXYZ(eqdata.rows[i1])
+			local v2 = pointToXYZ(eqdata.rows[i2])
+			local axis = v1:cross(v2):normalize()
+			local angle = math.acos(v1:dot(v2))
+			if angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
+				circles:insert{
+					axis = axis,
+					angle = math.pi * .5,
+					color = vec3d(1, 0, 0),
+					centerPos = (v1 + v2):normalize(),	-- midpoint between two earthquake lines
+					centerAngle = .5 * angle,	-- half the angle between them
+				}
+			end
+		end
+	end
+
+	self:updateGrid()
 end
+
+-- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
+local basisFor = [v] do
+	local x = v:cross(vec3d(1,0,0))
+	local y = v:cross(vec3d(0,1,0))
+	local z = v:cross(vec3d(0,0,1))
+	local xl = x:lenSq()
+	local yl = y:lenSq()
+	local zl = z:lenSq()
+	-- TODO there's too many situations where ternary needs ()'s to save parsing... I should just change its symbols
+	return xl > yl	-- x > y
+		and (
+			xl > zl
+			and x	-- x > y, x > z
+			or z		-- z > x > y
+		)
+		or (		-- y >= x
+			yl > zl
+			and y	-- y > z, y >= x
+			or z	-- z > y >= x
+		)
+end
+
+
+
+local wgs84 = charts.WGS84
+
+-- ported from WMM2020 GeomagnetismLibrary.c
+-- expects xyz in cartesian units earth-semimajor-axis
+-- output is in (radians, radians, km)
+--
+-- TODO also in earth-magnetic-field/run.lua
+-- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
+-- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
+local cartesianToLatLonWGS84 = [x, y, z] do
+	x = x * wgs84.a
+	y = y * wgs84.a
+	z = z * wgs84.a
+
+	local modified_b = z < 0 and -wgs84.b or wgs84.b
+
+	local r = math.sqrt(x*x + y*y)
+
+	local e = ( modified_b*z - (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local f = ( modified_b*z + (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local p = (4 / 3) * (e*f + 1)
+	local q = 2 * (e*e - f*f)
+	local d = p*p*p + q*q
+
+	local v
+	if  d >= 0 then
+		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
+			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
+	else
+		v= 2 * math.sqrt( -p )
+			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
+	end
+
+	if v*v < math.abs(p)  then
+		v = -(v*v*v + 2*q) / (3*p)
+	end
+
+	local g = (math.sqrt( e*e + v ) + e) / 2
+	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
+
+	local rlat = math.atan( (wgs84.a*(1 - t*t)) / (2*modified_b*t) )
+	local phi = rlat
+
+	local height = (r - wgs84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
+	local zlong = math.atan2(y, x)
+	if  zlong < 0 then
+		zlong = zlong + 2*math.pi
+	end
+	local lambda = zlong
+	while lambda > math.pi do
+		lambda = lambda - 2 * math.pi
+	end
+	return phi, lambda, height * 1e+3		-- km back to m
+end
+
+local numCircleDivs = 100
+local numGridLines = 1
+App.updateGrid = [:] do
+	local vertexes = table()
+	local colors = table()
+	local geometries = table()
+	for _,c in ipairs(circles) do
+		local circleAngle = c.angle
+		local a1 = c.axis
+		local a2 = basisFor(a1):normalize()
+		local a3 = a1:cross(a2)
+		-- re-ortho-normalize a3
+		for j=1,numGridLines do
+			local phi = j/numGridLines*circleAngle
+			local decl = math.cos(phi)
+			local phi_r = math.sin(phi)
+
+			local indexStart = #vertexes / 2
+			for i=1,numCircleDivs do
+				local th = (i-.5)/numCircleDivs*2*math.pi
+				local v = a1 * decl + a2 * phi_r * math.cos(th) + a3 * phi_r * math.sin(th)
+				local x, y, z = v:unpack()
+				--local phi, lambda = cartesianToLatLonWGS84(x,y,z)
+				local phi, lambda = cartesianToLatLonWGS84(z,x,y)
+				vertexes:insert(((math.deg(lambda) + 180) / 360) % 1)
+				vertexes:insert(((math.deg(phi) + 90) / 180) % 1)
+				local cosAngle = v:dot(c.centerPos)
+				--local angle = math.acos(cosAngle)
+				--local alpha = angle < c.centerAngle and 1 or 0
+				--local alpha = math.clamp(1 - angle / c.centerAngle, 0, 1)^10
+				local alpha = math.clamp(cosAngle / math.cos(c.centerAngle), 0, 1)
+				colors:insert(c.color.x)
+				colors:insert(c.color.y)
+				colors:insert(c.color.z)
+				colors:insert(alpha)
+			end
+			local indexEnd = #vertexes / 2
+
+			geometries:insert{
+				mode = gl.GL_LINE_LOOP,
+				offset = indexStart,
+				count = indexEnd - indexStart,
+			}
+		end
+	end
+print('making circlesObj', #vertexes, #colors)
+	self.circlesObj = GLSceneObject{
+		program = self.circlesShader,
+		vertexes = {
+			data = vertexes,
+			dim = 2,
+		},
+		attrs = {
+			color = {
+				buffer = {
+					data = colors,
+					dim = 4,
+				},
+			},
+		},
+		geometries = geometries,
+	}
+end
+--]=======] END COPY FROM EARTH TRANSPORT NETWORK
+
+
 
 local weightFields = chartCNames:mapi([name] 'weight_'..name)
 local vars = table(
@@ -282,11 +583,13 @@ local vars = table(
 		normalizeWeights = true,
 		drawEarth = true,
 		drawEarthquakes = true,
+		drawGreatArcs = true,
+		greatArcAlpha = 1,
 	}
 ):setmetatable(nil)
 
 App.update = [:] do
-	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
+	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
 	if vars.drawEarth then
 		-- [=====[ BEGIN CLIP FROM GEOGRAPHIC-CHARTS
@@ -312,6 +615,25 @@ App.update = [:] do
 		--]=====] END EARTHQUAKES
 	end
 
+	if vars.drawGreatArcs then
+		-- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
+		local sceneObj = self.circlesObj
+		for _,name in ipairs(weightFields) do
+			sceneObj.uniforms[name] = vars[name]
+		end
+		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		sceneObj.uniforms.alpha = vars.greatArcAlpha
+		--gl.glLineWidth(4)
+gl.glEnable(gl.GL_BLEND)
+gl.glDepthMask(0)
+		sceneObj:draw()
+gl.glDepthMask(1)
+gl.glDisable(gl.GL_BLEND)
+		--gl.glLineWidth(1)
+		--]=====] END COPY FROM EARTH TRANSPORT NETWORK
+	end
+
 	App.super.update(self)
 end
 
@@ -320,8 +642,11 @@ App.updateGUI = [:] do
 	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
 	if ig.igBeginMainMenuBar() then
 		if ig.igBeginMenu'options:' then
+			ig.luatableCheckbox('ortho', self.view, 'ortho')
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
+			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
+			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 
 			ig.luatableCheckbox('normalize weights', vars, 'normalizeWeights')
 			local changed
