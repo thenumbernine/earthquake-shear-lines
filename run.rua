@@ -472,13 +472,15 @@ void main() {
 		for i2=i1+1,#eqdata.rows do
 			local v1 = pointToXYZ(eqdata.rows[i1])
 			local v2 = pointToXYZ(eqdata.rows[i2])
-			local axis = v1:cross(v2):normalize()
+			local torque = v1:cross(v2)
+			local axis = torque:normalize()
 
 			-- hmmmmm
 			-- if ponits are 180' or if they are next to each other then we want no infuence ...
 			-- ... .maybe I souldn't nrmlize with the cross produt ...
 			-- and then I should look at the point-cloud of the axis' ...
-			pairCrossPoints:emplace_back():set(v1:cross(v2):unpack())
+			pairCrossPoints:emplace_back():set(torque:unpack())
+			pairCrossPoints:emplace_back():set((-torque):unpack())
 
 			local angle = math.acos(v1:dot(v2))
 			if math.rad(15) < angle and angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
@@ -600,7 +602,7 @@ App.updateGrid = [:] do
 				local v = a1 * decl + a2 * phi_r * math.cos(th) + a3 * phi_r * math.sin(th)
 				local x, y, z = v:unpack()
 				--local phi, lambda = cartesianToLatLonWGS84(x,y,z)
-				local phi, lambda = cartesianToLatLonWGS84(z,x,y)
+				local phi, lambda = cartesianToLatLonWGS84(z,x,y)	-- hmm ...
 				vertexes:insert(((math.deg(lambda) + 180) / 360) % 1)
 				vertexes:insert(((math.deg(phi) + 90) / 180) % 1)
 				local cosAngle = v:dot(c.centerPos)
