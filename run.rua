@@ -28,7 +28,7 @@ for _,name in ipairs(chartNames) do
 	charts[name]?:build()
 end
 
-local chartCNames = charts:mapi([chart] chart:getCName())
+local chartCNames = charts:mapi(|chart| chart:getCName())
 local chartCode = require 'geographic-charts.code'(charts)
 --]=======]
 
@@ -51,7 +51,7 @@ eqdata:setColumnNames(eqdata.rows:remove(1))
 local App = require 'imgui.appwithorbit'()
 App.title = 'Earthquake Geodesics'
 App.viewDist = 2
-App.initGL = [:] do
+App.initGL = |:| do
 	App.super.initGL(self)
 	self.view.ortho = true
 	self.view.orthoSize = 3
@@ -427,28 +427,28 @@ void main() {
 	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE) --gl.GL_ONE_MINUS_SRC_ALPHA)
 
 
-	local rotateX = [v, theta] do
+	local rotateX = |v, theta| do
 		local c, s = math.cos(theta), math.sin(theta)
 		return vec3d(
 			v.x,
 			v.y * c - v.z * s,
 			v.y * s + v.z * c)
 	end
-	local rotateY = [v, theta] do
+	local rotateY = |v, theta| do
 		local c, s = math.cos(theta), math.sin(theta)
 		return vec3d(
 			v.x * c + v.z * s,
 			v.y,
 			v.x * s - v.z * c)
 	end
-	local rotateZ = [v, theta] do
+	local rotateZ = |v, theta| do
 		local c, s = math.cos(theta), math.sin(theta)
 		return vec3d(
 			v.x * c - v.y * s,
 			v.x * s + v.y * c,
 			v.z)
 	end
-	local pointToXYZ = [row] do
+	local pointToXYZ = |row| do
 		local v = vec3d(0, 0, 1)   -- z+ is default
 		v = rotateX(v, -math.rad(row.latitude))
 		v = rotateY(v, math.pi - math.rad(row.longitude))
@@ -501,7 +501,7 @@ void main() {
 end
 
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
-local basisFor = [v] do
+local basisFor = |v| do
 	local x = v:cross(vec3d(1, 0, 0))
 	local y = v:cross(vec3d(0, 1, 0))
 	local z = v:cross(vec3d(0, 0, 1))
@@ -533,7 +533,7 @@ local wgs84 = charts.WGS84
 -- TODO also in earth-magnetic-field/run.lua
 -- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
 -- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
-local cartesianToLatLonWGS84 = [x, y, z] do
+local cartesianToLatLonWGS84 = |x, y, z| do
 	x = x * wgs84.a
 	y = y * wgs84.a
 	z = z * wgs84.a
@@ -581,7 +581,7 @@ end
 
 local numCircleDivs = 100
 local numGridLines = 1
-App.updateGrid = [:] do
+App.updateGrid = |:| do
 	local vertexes = table()
 	local colors = table()
 	local geometries = table()
@@ -646,9 +646,9 @@ end
 
 
 
-local weightFields = chartCNames:mapi([name] 'weight_'..name)
+local weightFields = chartCNames:mapi(|name| 'weight_'..name)
 local vars = table(
-	weightFields:mapi([name] (name == 'weight_Equirectangular' and 1 or 0, name)),
+	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
 	{
 		normalizeWeights = true,
 		drawEarth = true,
@@ -661,7 +661,7 @@ local vars = table(
 	}
 ):setmetatable(nil)
 
-App.update = [:] do
+App.update = |:| do
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
 	if vars.drawEarth then
@@ -718,7 +718,7 @@ gl.glLineWidth(1)
 	App.super.update(self)
 end
 
-App.updateGUI = [:] do
+App.updateGUI = |:| do
 	ig.igSetNextWindowBgAlpha(.3)
 	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
 	if ig.igBeginMainMenuBar() then
