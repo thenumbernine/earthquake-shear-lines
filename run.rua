@@ -48,6 +48,86 @@ local eqdata = assert(require 'csv'.string(datastr))
 eqdata:setColumnNames(eqdata.rows:remove(1))
 --]=======]
 
+-- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
+local basisFor = |v| do
+	local x = v:cross(vec3d(1, 0, 0))
+	local y = v:cross(vec3d(0, 1, 0))
+	local z = v:cross(vec3d(0, 0, 1))
+	local xl = x:lenSq()
+	local yl = y:lenSq()
+	local zl = z:lenSq()
+	-- TODO there's too many situations where ternary needs ()'s to save parsing... I should just change its symbols
+	return xl > yl	-- x > y
+		and (
+			xl > zl
+			and x	-- x > y, x > z
+			or z		-- z > x > y
+		)
+		or (		-- y >= x
+			yl > zl
+			and y	-- y > z, y >= x
+			or z	-- z > y >= x
+		)
+end
+
+local wgs84 = charts.WGS84
+
+-- ported from WMM2020 GeomagnetismLibrary.c
+-- expects xyz in cartesian units earth-semimajor-axis
+-- output is in (radians, radians, km)
+--
+-- TODO also in earth-magnetic-field/run.lua
+-- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
+-- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
+local cartesianToLatLonWGS84 = |x, y, z| do
+	x = x * wgs84.a
+	y = y * wgs84.a
+	z = z * wgs84.a
+
+	local modified_b = z < 0 and -wgs84.b or wgs84.b
+
+	local r = math.sqrt(x*x + y*y)
+
+	local e = ( modified_b*z - (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local f = ( modified_b*z + (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local p = (4 / 3) * (e*f + 1)
+	local q = 2 * (e*e - f*f)
+	local d = p*p*p + q*q
+
+	local v
+	if  d >= 0 then
+		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
+			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
+	else
+		v= 2 * math.sqrt( -p )
+			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
+	end
+
+	if v*v < math.abs(p)  then
+		v = -(v*v*v + 2*q) / (3*p)
+	end
+
+	local g = (math.sqrt( e*e + v ) + e) / 2
+	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
+
+	local rlat = math.atan( (wgs84.a*(1 - t*t)) / (2*modified_b*t) )
+	local phi = rlat
+
+	local height = (r - wgs84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
+	local zlong = math.atan2(y, x)
+	if  zlong < 0 then
+		zlong = zlong + 2*math.pi
+	end
+	local lambda = zlong
+	while lambda > math.pi do
+		lambda = lambda - 2 * math.pi
+	end
+	return phi, lambda, height * 1e+3		-- km back to m
+end
+--]=======] END COPY FROM EARTH TRANSPORT NETWORK
+
+
+
 local App = require 'imgui.appwithorbit'()
 App.title = 'Earthquake Geodesics'
 App.viewDist = 2
@@ -455,8 +535,60 @@ void main() {
 		return v
 	end
 
-	pairCrossPointsObj = GLSceneObject{
-		program = GLProgram.make{vertex = 'vec3', color = {1,1,1,1}},
+	self.pairCrossPointsObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			vertexCode = template([[
+layout(location=0) in vec2 vertex;
+uniform mat4 mvProjMat;
+uniform bool chartIs3D;
+uniform vec2 latlon0;
+
+//////// BEGIN CODE MATCHING CHART CODE ABOVE
+<?=chartCode?>
+
+<? for _,name in ipairs(chartCNames) do
+?>uniform float weight_<?=name?>;
+<? end
+?>
+
+//////// END CODE MATCHING CHART CODE ABOVE
+
+void main() {
+	//////// BEGIN CODE MATCHING CHART CODE ABOVE
+	vec3 coords = vec3(
+		mod(vertex.y * 180. - latlon0.y, 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vertex.x * 360. - latlon0.x, 360.) - 180.,	// lon in deg, [-180, 180]
+		2e+3);						// height in meters
+
+	vec3 pos = 0.
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>(coords)
+<? end
+?>	;
+
+	//from meters to normalized coordinates
+	pos /= WGS84_a;
+
+	if (chartIs3D) {
+		pos = vec3(pos.z, pos.x, pos.y);
+	}
+	gl_Position = mvProjMat * vec4(pos, 1.);
+	//////// END CODE MATCHING CHART CODE ABOVE
+
+}
+]],			{
+				chartCode = chartCode,
+				chartCNames = chartCNames,
+			}),
+			fragmentCode = [[
+out vec4 fragColor;
+void main() {
+	fragColor = vec4(1., 1., 1., 1.);
+}
+]],
+},
 		geometry = {
 			mode = gl.GL_POINTS,
 		},
@@ -465,29 +597,34 @@ void main() {
 			useVec = true,
 		},
 	}
-	local pairCrossPoints = pairCrossPointsObj.attrs.vertex.buffer.vec
+	local pairCrossPoints = self.pairCrossPointsObj.attrs.vertex.buffer.vec
 
 	circles = table()
 	for i1=1,#eqdata.rows-1 do
 		for i2=i1+1,#eqdata.rows do
 			local v1 = pointToXYZ(eqdata.rows[i1])
 			local v2 = pointToXYZ(eqdata.rows[i2])
-			local torque = v1:cross(v2)
-			local axis = torque:normalize()
+			local torque = v1:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
+			local axisLen = torque:length()
+			local axis = torque * (1 / (math.max(axisLen, 1e-15)))
 
 			-- hmmmmm
 			-- if ponits are 180' or if they are next to each other then we want no infuence ...
 			-- ... .maybe I souldn't nrmlize with the cross produt ...
 			-- and then I should look at the point-cloud of the axis' ...
-			pairCrossPoints:emplace_back():set(torque:unpack())
-			pairCrossPoints:emplace_back():set((-torque):unpack())
+			for s=-1,1,2 do
+				local x,y,z = (s * torque):unpack()
+				local phi, lambda = cartesianToLatLonWGS84(z,x,y)	-- hmm ...
+				pairCrossPoints:insert(((math.deg(lambda) + 180) / 360) % 1)
+				pairCrossPoints:insert(((math.deg(phi) + 90) / 180) % 1)
+			end
 
 			local angle = math.acos(v1:dot(v2))
 			if math.rad(15) < angle and angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
 				circles:insert{
 					axis = axis,
 					angle = math.pi * .5,
-					color = vec3d(1, .3, .07),
+					color = vec3d(1, .3, .07) * axisLen,
 					centerPos = (v1 + v2):normalize(),	-- midpoint between two earthquake lines
 					centerAngle = .5 * angle,	-- half the angle between them
 				}
@@ -495,90 +632,12 @@ void main() {
 		end
 	end
 
-	pairCrossPointsObj:endUpdate()
+	self.pairCrossPointsObj:endUpdate()
 
 	self:updateGrid()
 end
 
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
-local basisFor = |v| do
-	local x = v:cross(vec3d(1, 0, 0))
-	local y = v:cross(vec3d(0, 1, 0))
-	local z = v:cross(vec3d(0, 0, 1))
-	local xl = x:lenSq()
-	local yl = y:lenSq()
-	local zl = z:lenSq()
-	-- TODO there's too many situations where ternary needs ()'s to save parsing... I should just change its symbols
-	return xl > yl	-- x > y
-		and (
-			xl > zl
-			and x	-- x > y, x > z
-			or z		-- z > x > y
-		)
-		or (		-- y >= x
-			yl > zl
-			and y	-- y > z, y >= x
-			or z	-- z > y >= x
-		)
-end
-
-
-
-local wgs84 = charts.WGS84
-
--- ported from WMM2020 GeomagnetismLibrary.c
--- expects xyz in cartesian units earth-semimajor-axis
--- output is in (radians, radians, km)
---
--- TODO also in earth-magnetic-field/run.lua
--- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
--- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
-local cartesianToLatLonWGS84 = |x, y, z| do
-	x = x * wgs84.a
-	y = y * wgs84.a
-	z = z * wgs84.a
-
-	local modified_b = z < 0 and -wgs84.b or wgs84.b
-
-	local r = math.sqrt(x*x + y*y)
-
-	local e = ( modified_b*z - (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
-	local f = ( modified_b*z + (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
-	local p = (4 / 3) * (e*f + 1)
-	local q = 2 * (e*e - f*f)
-	local d = p*p*p + q*q
-
-	local v
-	if  d >= 0 then
-		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
-			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
-	else
-		v= 2 * math.sqrt( -p )
-			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
-	end
-
-	if v*v < math.abs(p)  then
-		v = -(v*v*v + 2*q) / (3*p)
-	end
-
-	local g = (math.sqrt( e*e + v ) + e) / 2
-	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
-
-	local rlat = math.atan( (wgs84.a*(1 - t*t)) / (2*modified_b*t) )
-	local phi = rlat
-
-	local height = (r - wgs84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
-	local zlong = math.atan2(y, x)
-	if  zlong < 0 then
-		zlong = zlong + 2*math.pi
-	end
-	local lambda = zlong
-	while lambda > math.pi do
-		lambda = lambda - 2 * math.pi
-	end
-	return phi, lambda, height * 1e+3		-- km back to m
-end
-
 local numCircleDivs = 100
 local numGridLines = 1
 App.updateGrid = |:| do
@@ -656,6 +715,8 @@ local vars = table(
 		drawGreatArcs = true,
 		greatArcAlpha = .25,
 		lineWidth = 4,
+		drawAxisTorques = true,
+		axisTorquePointSize = 3,
 		lat0 = 0,	-- degrees
 		lon0 = 180,	-- degrees
 	}
@@ -710,10 +771,19 @@ gl.glLineWidth(1)
 		--]=====] END COPY FROM EARTH TRANSPORT NETWORK
 	end
 
-	pairCrossPointsObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-	gl.glPointSize(3)
-	pairCrossPointsObj:draw()
-	gl.glPointSize(1)
+	if vars.drawAxisTorques then
+		local sceneObj = self.pairCrossPointsObj
+		for _,name in ipairs(weightFields) do
+			sceneObj.uniforms[name] = vars[name]
+		end
+		sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
+		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+
+		gl.glPointSize(vars.axisTorquePointSize)
+		sceneObj:draw()
+		gl.glPointSize(1)
+	end
 
 	App.super.update(self)
 end
@@ -724,11 +794,20 @@ App.updateGUI = |:| do
 	if ig.igBeginMainMenuBar() then
 		if ig.igBeginMenu'options:' then
 			ig.luatableCheckbox('ortho', self.view, 'ortho')
+			if ig.igButton'reset view' then
+				self.view.ortho = true
+				self.view.orthoSize = self.viewOrthoSize
+				self.view.angle:set(0,0,0,1)
+				self.view.orbit:set(0,0,0)
+				self.view.pos:set(0, 0, self.viewDist)
+			end
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
 			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
+			ig.luatableCheckbox('drawAxisTorques', vars, 'drawAxisTorques')
+			ig.luatableSliderFloat('axisTorquePointSize', vars, 'axisTorquePointSize', 0, 10)
 
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -90, 90)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
