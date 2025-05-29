@@ -34,12 +34,15 @@ local chartCode = require 'geographic-charts.code'(charts)
 
 
 -- [=======[ download data
-local datafn = path'latest.csv'
+local datestr = os.date('%Y-%m-%d', os.time())
+local prevdatestr = os.date('%Y-%m-%d', os.time() - 60*60*24)
+local datafn = path(prevdatestr..'.csv')
 local datastr
 if not datafn:exists() then
 	print'downlading...'
 	local https = require 'ssl.https'
-	datastr = assert(https.request'https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime=2025-05-23%2000:00:00&endtime=2025-05-24%2023:59:59&minmagnitude=2.5&orderby=time')
+
+	datastr = assert(https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..prevdatestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'))
 	assert(datafn:write(datastr))
 else
 	datastr = assert(datafn:read())

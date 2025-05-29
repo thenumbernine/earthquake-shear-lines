@@ -1,0 +1,17 @@
+--------------------------------------------
+-- generated with dist/build-distinfo.rua --
+--------------------------------------------
+
+name = "earthquake-shear-lines"
+files = {
+	["earth-color.png"] = "earthquake-shear-lines/earth-color.png",
+	["run.rua"] = "earthquake-shear-lines/run.rua",
+}
+deps = {
+	"csv",
+	"geographic-charts",
+	"gl",
+	"imgui",
+	"template",
+	"vec-ffi",
+}
