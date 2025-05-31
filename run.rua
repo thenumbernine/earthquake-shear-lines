@@ -604,12 +604,16 @@ void main() {
 
 	circles = table()
 	for i1=1,#eqdata.rows-1 do
+		local e1 = eqdata.rows[i1]
 		for i2=i1+1,#eqdata.rows do
-			local v1 = pointToXYZ(eqdata.rows[i1])
-			local v2 = pointToXYZ(eqdata.rows[i2])
+			local e2 = eqdata.rows[i2]
+			local v1 = pointToXYZ(e1)
+			local v2 = pointToXYZ(e2)
 			local torque = v1:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
 			local axisLen = torque:length()
 			local axis = torque * (1 / (math.max(axisLen, 1e-15)))
+			local influence = axisLen * 10^e1.mag * 10^e2.mag
+			-- hmm proper torque would be based on radius from earth ... so consider depth?
 
 			-- hmmmmm
 			-- if ponits are 180' or if they are next to each other then we want no infuence ...
@@ -623,11 +627,12 @@ void main() {
 			end
 
 			local angle = math.acos(v1:dot(v2))
-			if math.rad(15) < angle and angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
+			--if math.rad(15) < angle and angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
+			if math.rad(10) < angle and angle < math.rad(90) then	-- if I weight by cross then that'll make the 0' and 180' angles diminish ... nah, there's still a lot of noise unless I turn down the alpha ... then it's hard to highlight any geodesics ...
 				circles:insert{
 					axis = axis,
 					angle = math.pi * .5,
-					color = vec3d(1, .3, .07) * axisLen,
+					color = vec3d(1, .3, .07) * influence,
 					centerPos = (v1 + v2):normalize(),	-- midpoint between two earthquake lines
 					centerAngle = .5 * angle,	-- half the angle between them
 				}
