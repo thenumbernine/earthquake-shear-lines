@@ -39,7 +39,7 @@ local prevdatestr = os.date('%Y-%m-%d', os.time() - 60*60*24)
 local datafn = path(prevdatestr..'.csv')
 local datastr
 if not datafn:exists() then
-	print'downlading...'
+	print'downloading...'
 	local https = require 'ssl.https'
 
 	datastr = assert(https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..prevdatestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'))
