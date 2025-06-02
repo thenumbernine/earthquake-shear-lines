@@ -41,6 +41,17 @@ local getDayCache = calcs.getDayCache
 local checkTime = calcs.checkTime
 local checkDuration = 60*5	-- check every 5 mins
 
+-- should this be based on what quakes are within 60' and caused me to flag the geodesic?
+-- or should this be on what quakes are subsequently within 1' or 5' or so of that geodesic after-the-fact?
+-- doing the former first ...
+local circlesMadeByQuakes = {}
+for ci,c in ipairs(allCircles) do
+	for _,i in ipairs(c.indexes) do
+		circlesMadeByQuakes[i] ??= table()
+		circlesMadeByQuakes[i]:insert(ci)
+	end
+end
+
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
 local basisFor = |v| do
 	local x = v:cross(vec3d(1, 0, 0))
@@ -125,14 +136,17 @@ local weightFields = chartCNames:mapi(|name| 'weight_'..name)
 local vars = table(
 	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
 	{
+		showOnlySelectedEarthquakeArcs = true ,	-- true = show only selected earthquake circle, false = show all
 		normalizeWeights = true,
 		drawEarth = true,
 		drawEarthquakes = true,
 		drawGreatArcs = true,
 		greatArcAlpha = .1,
 		lineWidth = 1,
+		--[=[ TODO
 		drawAxisTorques = true,
 		axisTorquePointSize = 3,
+		--]=]
 		lat0 = 0,	-- degrees
 		lon0 = 180,	-- degrees
 		earthquakeIndex = #earthquakes,
@@ -145,7 +159,7 @@ local recalculateOldestEarthquakeIndex = ||do
 	for i=vars.earthquakeIndex,1,-1 do
 		if earthquakes[vars.earthquakeIndex].ostime - earthquakes[i].ostime > considerationTimeWindowSize then break end
 		oldestEarthquakeIndex = i
-	end	
+	end
 end
 
 
@@ -566,6 +580,7 @@ void main() {
 		return v
 	end
 
+	--[=[ build here
 	-- show axii of circles
 	self.pairCrossPointsObj = GLSceneObject{
 		program = {
@@ -630,7 +645,6 @@ void main() {
 		},
 	}
 
-	--[=[ build here
 	local pairCrossPoints = self.pairCrossPointsObj.attrs.vertex.buffer.vec
 	circles = table()
 	for i1=1,#earthquakes-1 do
@@ -683,10 +697,22 @@ end
 local numCircleDivs = 100
 local numGridLines = 1
 App.refreshCircles = |:| do
-	-- [=[ or just rely on those already built ... for the last earthquake ...
-	circles = earthquakes[vars.earthquakeIndex]
-		.touchingCircles:mapi(|t| allCircles[t.circle])
-	--]=]	
+	-- [=[ show all circles touching our currently selected
+	if vars.showOnlySelectedEarthquakeArcs then
+		circles = earthquakes[vars.earthquakeIndex]
+			.touchingCircles:mapi(|t| allCircles[t.circle])
+	--]=]
+	-- [=[ show all circles touching any active earthquakes in the last timeframe
+	else
+		local circleIndexes = table()
+		for i=oldestEarthquakeIndex,vars.earthquakeIndex do
+			for _,ci in ipairs(circlesMadeByQuakes[i]) do
+				circleIndexes[ci] = true
+			end
+		end
+		circles = circleIndexes:keys():sort():mapi(|ci| allCircles[ci])
+	end
+	--]=]
 
 	local vertexes = table()
 	local colors = table()
@@ -730,7 +756,7 @@ App.refreshCircles = |:| do
 			}
 		end
 	end
-print('making circlesObj', #vertexes, #colors)
+--DEBUG:print('making circlesObj', #vertexes, #colors)
 	self.circlesObj = GLSceneObject{
 		program = self.circlesShader,
 		vertexes = {
@@ -778,13 +804,13 @@ App.update = |:| do
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.hiliteIndex = vars.earthquakeIndex-1
-		
+
 		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
 		sceneObj.geometry.offset = 6 * (oldestEarthquakeIndex - 1)
 		sceneObj.geometry.count = 6 * (vars.earthquakeIndex - oldestEarthquakeIndex + 1)
 
 		sceneObj:draw()
-		
+
 		sceneObj.geometry.offset = nil
 		sceneObj.geometry.count = nil
 		--]=====] END EARTHQUAKES
@@ -810,6 +836,7 @@ gl.glLineWidth(1)
 		--]=====] END COPY FROM EARTH TRANSPORT NETWORK
 	end
 
+	--[=[ TODO
 	if vars.drawAxisTorques then
 		local sceneObj = self.pairCrossPointsObj
 		if #sceneObj.attrs.vertex.buffer.vec > 0 then
@@ -825,6 +852,7 @@ gl.glLineWidth(1)
 			gl.glPointSize(1)
 		end
 	end
+	--]=]
 
 	App.super.update(self)
 
@@ -878,14 +906,21 @@ App.updateGUI = |:| do
 			end
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
+
 			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
+			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
+				self:refreshCircles()
+			end
+
+			--[=[ TODO
 			ig.luatableCheckbox('drawAxisTorques', vars, 'drawAxisTorques')
 			ig.luatableSliderFloat('axisTorquePointSize', vars, 'axisTorquePointSize', 0, 10)
+			--]=]
 
 			local changed
-			changed = ig.luatableSliderFloat('earthquakeIndex s', vars, 'earthquakeIndex', 1, #earthquakes) 
+			changed = ig.luatableSliderFloat('earthquakeIndex s', vars, 'earthquakeIndex', 1, #earthquakes)
 			changed = ig.luatableInputInt('earthquakeIndex t', vars, 'earthquakeIndex', 1, #earthquakes) or changed
 			if changed then
 				self:updateEarthquakeIndex()

@@ -34,7 +34,7 @@ local getDayCache = |t, force| do
 		assert(csvpath:write(csvstr))
 	else
 		-- cached?  don't set the 'changed' flag
-		print('readng cache '..csvpath)
+		print('reading cache '..csvpath)
 		csvstr = assert(csvpath:read())
 	end
 	local csvdata = assert(require 'csv'.string(csvstr))
