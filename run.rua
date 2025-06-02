@@ -33,11 +33,13 @@ local chartCNames = charts:mapi(|chart| chart:getCName())
 local chartCode = require 'geographic-charts.code'(charts)
 --]=======]
 
-local calcs = require 'probs'
-local earthquakes = assert.index(calcs, 'earthquakes')
+local calcs = require 'calcs'
+local earthquakes = calcs.earthquakes
 local allCircles = calcs.circles
 local considerationTimeWindowSize = calcs.considerationTimeWindowSize
-
+local getDayCache = calcs.getDayCache
+local checkTime = calcs.checkTime
+local checkDuration = 60*5	-- check every 5 mins
 
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
 local basisFor = |v| do
@@ -829,6 +831,14 @@ gl.glLineWidth(1)
 
 	-- while we're here...
 	-- ... re-download the latest day's earthquakes
+	local t = os.time()
+	if t > checkTime + checkDuration then
+		checkTime = t
+		local newTodaysEarthquakes, changed = getDayCache(t, true)
+		if changed then
+			print(os.date(), 'TODO upate me plz')
+		end
+	end
 end
 
 App.updateEarthquakeIndex = |:| do

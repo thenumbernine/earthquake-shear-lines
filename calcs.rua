@@ -16,12 +16,24 @@ local getDayCache = |t, force| do
 	local datestr = os.date('%Y-%m-%d', t)
 	local csvpath = path('cache/'..datestr..'.csv')
 	local csvstr
+	local changed
 	if force or not csvpath:exists() then
 		print('downloading '..datestr..'...')
 		local https = require 'ssl.https'
 		csvstr = assert(https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'))
+	
+		if force then
+			if csvpath:exists() then
+				changed = assert(csvpath:read()) ~= csvstr
+			end
+		else
+			-- if no force and it's a new file, then flag it for 'changed'
+			changed = true
+		end
+
 		assert(csvpath:write(csvstr))
 	else
+		-- cached?  don't set the 'changed' flag
 		print('readng cache '..csvpath)
 		csvstr = assert(csvpath:read())
 	end
@@ -35,18 +47,18 @@ local getDayCache = |t, force| do
 			neq[k] = eq[k]
 		end
 		return neq
-	end)
+	end), changed
 end
 
 local earthquakes = table()
-local thistime = os.time()
-for t=thistime-31*dayInSec,thistime-dayInSec,dayInSec do
+local checkTime = os.time()
+for t=checkTime-31*dayInSec,checkTime-dayInSec,dayInSec do
 	local deq = getDayCache(t)
 	earthquakes:append(deq)
 end
 do	-- always re-download today
 	-- TODO between os.time and os.date, one of them can do offsets and one can't, so ...
-	local deq = getDayCache(thistime, true)
+	local deq = getDayCache(checkTime, true)
 	earthquakes:append(deq)
 end
 print('total', #earthquakes)
@@ -86,8 +98,8 @@ earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
 
 
 -- tolerance of how close a quake must be to a previous circle to consider along the geodesic
-local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(1)	-- in radians
---local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(5)	-- in radians
+--local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(1)	-- in radians
+local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(5)	-- in radians
 --local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(15)	-- in radians
 
 -- how far back we want to look when comparing great-arcs 
@@ -221,4 +233,6 @@ return {
 	earthquakes = assert(earthquakes),
 	circles = allCircles,
 	considerationTimeWindowSize = considerationTimeWindowSize, 
+	getDayCache = getDayCache,
+	checkTime = checkTime,
 }
