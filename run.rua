@@ -1,5 +1,6 @@
 #!/usr/bin/env rua
 local template = require 'template'
+local sdl = require 'sdl'
 local gl = require 'gl'
 local GLSceneObject = require 'gl.sceneobject'
 local GLArrayBuffer = require 'gl.arraybuffer'
@@ -32,30 +33,11 @@ local chartCNames = charts:mapi(|chart| chart:getCName())
 local chartCode = require 'geographic-charts.code'(charts)
 --]=======]
 
+local calcs = require 'probs'
+local earthquakes = assert.index(calcs, 'earthquakes')
+local allCircles = calcs.circles
+local considerationTimeWindowSize = calcs.considerationTimeWindowSize
 
---[=======[ download data
-local datestr = os.date('%Y-%m-%d', os.time())
-local prevdatestr = os.date('%Y-%m-%d', os.time() - 60*60*24)
-local datafn = path(prevdatestr..'.csv')
-local datastr
-if not datafn:exists() then
-	print'downloading...'
-	local https = require 'ssl.https'
-
-	datastr = assert(https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..prevdatestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'))
-	assert(datafn:write(datastr))
-else
-	datastr = assert(datafn:read())
-end
-local datacsv = assert(require 'csv'.string(datastr))
-local earthquakes = datacsv.rows
-datacsv:setColumnNames(earthquakes:remove(1))
---]=======]
--- [=======[ or use our probs file that does the calcs
-local earthquakes = require 'probs'.earthquakes
-local allCircles = require 'probs'.circles
-local considerationTimeWindowSize = require 'probs'.considerationTimeWindowSize
---]=======]
 
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
 local basisFor = |v| do
@@ -163,8 +145,6 @@ local recalculateOldestEarthquakeIndex = ||do
 		oldestEarthquakeIndex = i
 	end	
 end
-recalculateOldestEarthquakeIndex()
-
 
 
 local App = require 'imgui.appwithorbit'()
@@ -350,10 +330,12 @@ void main() {
 layout(location=0) in vec2 vertex;
 layout(location=1) in vec2 texcoord;
 out vec2 texcoordv;
+flat out float hilite;
 
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
 uniform vec2 latlon0;
+uniform uint hiliteIndex;
 
 <?=chartCode?>
 
@@ -364,6 +346,12 @@ uniform vec2 latlon0;
 
 void main() {
 	texcoordv = texcoord;
+
+	if (gl_VertexID >= hiliteIndex * 6 && gl_VertexID < (hiliteIndex + 1) * 6) {
+		hilite = 1.;
+	} else {
+		hilite = 0.;
+	}
 
 	vec3 coords = vec3(
 		mod(vertex.y * 180. - latlon0.y, 180.) - 90.,	// lat in deg, [-90, 90]
@@ -388,10 +376,11 @@ void main() {
 			}),
 			fragmentCode = [[
 in vec2 texcoordv;
+flat in float hilite;
 out vec4 fragColor;
 void main() {
 	if (dot(texcoordv,texcoordv) > 1.) discard;
-	fragColor = vec4(1., .5, 0., 1.);
+	fragColor = vec4(1., .5 * (1. - hilite), 0., 1.);
 }
 ]],
 		},
@@ -684,13 +673,14 @@ void main() {
 	circles = allCircles
 	--]=]
 
-	self:updateGrid()
+	recalculateOldestEarthquakeIndex()
+	self:refreshCircles()
 end
 
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
 local numCircleDivs = 100
 local numGridLines = 1
-App.updateGrid = |:| do
+App.refreshCircles = |:| do
 	-- [=[ or just rely on those already built ... for the last earthquake ...
 	circles = earthquakes[vars.earthquakeIndex]
 		.touchingCircles:mapi(|t| allCircles[t.circle])
@@ -785,6 +775,7 @@ App.update = |:| do
 		sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		sceneObj.uniforms.hiliteIndex = vars.earthquakeIndex-1
 		
 		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
 		sceneObj.geometry.offset = 6 * (oldestEarthquakeIndex - 1)
@@ -834,6 +825,32 @@ gl.glLineWidth(1)
 	end
 
 	App.super.update(self)
+
+
+	-- while we're here...
+	-- ... re-download the latest day's earthquakes
+end
+
+App.updateEarthquakeIndex = |:| do
+	vars.earthquakeIndex = math.clamp(math.round(vars.earthquakeIndex), 1, #earthquakes)
+
+	recalculateOldestEarthquakeIndex()
+	self:refreshCircles()	-- TODO don't recalc all circles, just recalc indexes used
+end
+
+App.event = |:,e| do
+	App.super.event(self, e)
+	if e[0].type == sdl.SDL_EVENT_KEY_DOWN then
+		if not ig.igGetIO()[0].WantCaptureKeyboard then
+			if e[0].key.key == sdl.SDLK_LEFT then
+				vars.earthquakeIndex -= 1
+				self:updateEarthquakeIndex()
+			elseif e[0].key.key == sdl.SDLK_RIGHT then
+				vars.earthquakeIndex += 1
+				self:updateEarthquakeIndex()
+			end
+		end
+	end
 end
 
 App.updateGUI = |:| do
@@ -857,13 +874,14 @@ App.updateGUI = |:| do
 			ig.luatableCheckbox('drawAxisTorques', vars, 'drawAxisTorques')
 			ig.luatableSliderFloat('axisTorquePointSize', vars, 'axisTorquePointSize', 0, 10)
 
-			if ig.luatableSliderFloat('earthquakeIndex', vars, 'earthquakeIndex', 1, #earthquakes) then
-				vars.earthquakeIndex = math.round(vars.earthquakeIndex)
-				recalculateOldestEarthquakeIndex()
-				
-				self:updateGrid()	-- TODO don't recalc all circles, just recalc indexes used
+			local changed
+			changed = ig.luatableSliderFloat('earthquakeIndex s', vars, 'earthquakeIndex', 1, #earthquakes) 
+			changed = ig.luatableInputInt('earthquakeIndex t', vars, 'earthquakeIndex', 1, #earthquakes) or changed
+			if changed then
+				self:updateEarthquakeIndex()
 			end
 			ig.igText('earthquake time = '..earthquakes[vars.earthquakeIndex].time)
+			ig.igText('earthquake place = '..earthquakes[vars.earthquakeIndex].place)
 			ig.igText('oldestEarthquakeIndex = '..oldestEarthquakeIndex)
 			ig.igText('oldest earthquake time = '..earthquakes[oldestEarthquakeIndex].time)
 

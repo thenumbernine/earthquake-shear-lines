@@ -11,23 +11,45 @@ local vec3d = require 'vec-ffi.vec3d'
 
 local dayInSec = 60 * 60 * 24
 -- [=======[ download data
-local fromdatestr = os.date('%Y-%m-%d', os.time() - dayInSec * 31)
-local todatestr = os.date('%Y-%m-%d', os.time() - dayInSec)
-local basefn = fromdatestr..' to '..todatestr
-local csvpath = path(basefn..'.csv')
-local csvstr
-if not csvpath:exists() then
-	print'downloading...'
-	local https = require 'ssl.https'
-
-	csvstr = assert(https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..fromdatestr..'%2000:00:00&endtime='..todatestr..'%2023:59:59&minmagnitude=2.5&orderby=time'))
-	assert(csvpath:write(csvstr))
-else
-	csvstr = assert(csvpath:read())
+path'cache':mkdir()
+local getDayCache = |t, force| do
+	local datestr = os.date('%Y-%m-%d', t)
+	local csvpath = path('cache/'..datestr..'.csv')
+	local csvstr
+	if force or not csvpath:exists() then
+		print('downloading '..datestr..'...')
+		local https = require 'ssl.https'
+		csvstr = assert(https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'))
+		assert(csvpath:write(csvstr))
+	else
+		print('readng cache '..csvpath)
+		csvstr = assert(csvpath:read())
+	end
+	local csvdata = assert(require 'csv'.string(csvstr))
+	csvdata:setColumnNames(csvdata.rows:remove(1))
+	
+	-- map from csv index to k/v object
+	return csvdata.rows:mapi(|eq| do
+		local neq = {}
+		for _,k in ipairs(csvdata.columns) do
+			neq[k] = eq[k]
+		end
+		return neq
+	end)
 end
-local csvdata = assert(require 'csv'.string(csvstr))
-local earthquakes = csvdata.rows
-csvdata:setColumnNames(earthquakes:remove(1))
+
+local earthquakes = table()
+local thistime = os.time()
+for t=thistime-31*dayInSec,thistime-dayInSec,dayInSec do
+	local deq = getDayCache(t)
+	earthquakes:append(deq)
+end
+do	-- always re-download today
+	-- TODO between os.time and os.date, one of them can do offsets and one can't, so ...
+	local deq = getDayCache(thistime, true)
+	earthquakes:append(deq)
+end
+print('total', #earthquakes)
 --]=======]
 
 -- [===[ BEGIN COPY FROM run.rua
@@ -53,19 +75,14 @@ local latLonToXYZ = |eq| do
 end
 --]===] -- END COPY FROM run.rua
 
-earthquakes = earthquakes:mapi(|eq| do
-	-- map from csv index to k/v object
-	local neq = {}
-	for _,k in ipairs(csvdata.columns) do
-		neq[k] = eq[k]
-	end
+for _,eq in ipairs(earthquakes) do
 	-- add preprocessed fields	
-	local Y,m,d,H,M,S = neq.time:match'^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d%.%d%d%dZ)$'
+	local Y,m,d,H,M,S = eq.time:match'^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d%.%d%d%dZ)$'
 	assert(Y)	-- ... and the others should be there too
-	neq.ostime = os.time{year=Y, month=m, day=d, hour=H, min=M, sec=S}
-	neq.xyz = latLonToXYZ(neq)
-	return neq
-end):sort(|a,b| a.ostime < b.ostime)	-- oldest first
+	eq.ostime = os.time{year=Y, month=m, day=d, hour=H, min=M, sec=S}
+	eq.xyz = latLonToXYZ(eq)
+end
+earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
 
 
 -- tolerance of how close a quake must be to a previous circle to consider along the geodesic
@@ -201,7 +218,7 @@ luapath:write(tolua{
 --]]
 
 return {
-	earthquakes = earthquakes,
+	earthquakes = assert(earthquakes),
 	circles = allCircles,
 	considerationTimeWindowSize = considerationTimeWindowSize, 
 }
