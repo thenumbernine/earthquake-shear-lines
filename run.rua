@@ -33,7 +33,7 @@ local chartCode = require 'geographic-charts.code'(charts)
 --]=======]
 
 
--- [=======[ download data
+--[=======[ download data
 local datestr = os.date('%Y-%m-%d', os.time())
 local prevdatestr = os.date('%Y-%m-%d', os.time() - 60*60*24)
 local datafn = path(prevdatestr..'.csv')
@@ -47,8 +47,14 @@ if not datafn:exists() then
 else
 	datastr = assert(datafn:read())
 end
-local eqdata = assert(require 'csv'.string(datastr))
-eqdata:setColumnNames(eqdata.rows:remove(1))
+local datacsv = assert(require 'csv'.string(datastr))
+local earthquakes = datacsv.rows
+datacsv:setColumnNames(earthquakes:remove(1))
+--]=======]
+-- [=======[ or use our probs file that does the calcs
+local earthquakes = require 'probs'.earthquakes
+local allCircles = require 'probs'.circles
+local considerationTimeWindowSize = require 'probs'.considerationTimeWindowSize
 --]=======]
 
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
@@ -128,6 +134,36 @@ local cartesianToLatLonWGS84 = |x, y, z| do
 	return phi, lambda, height * 1e+3		-- km back to m
 end
 --]=======] END COPY FROM EARTH TRANSPORT NETWORK
+
+
+
+local weightFields = chartCNames:mapi(|name| 'weight_'..name)
+local vars = table(
+	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
+	{
+		normalizeWeights = true,
+		drawEarth = true,
+		drawEarthquakes = true,
+		drawGreatArcs = true,
+		greatArcAlpha = .1,
+		lineWidth = 1,
+		drawAxisTorques = true,
+		axisTorquePointSize = 3,
+		lat0 = 0,	-- degrees
+		lon0 = 180,	-- degrees
+		earthquakeIndex = #earthquakes,
+	}
+):setmetatable(nil)
+
+local oldestEarthquakeIndex
+local recalculateOldestEarthquakeIndex = ||do
+	oldestEarthquakeIndex = vars.earthquakeIndex
+	for i=vars.earthquakeIndex,1,-1 do
+		if earthquakes[vars.earthquakeIndex].ostime - earthquakes[i].ostime > considerationTimeWindowSize then break end
+		oldestEarthquakeIndex = i
+	end	
+end
+recalculateOldestEarthquakeIndex()
 
 
 
@@ -306,7 +342,7 @@ void main() {
 
 
 	-- [=====[ BEGIN EARTHQUAKES
-	self.eqObj = GLSceneObject{
+	self.earthquakeLatLonPointObj = GLSceneObject{
 		program = {
 			version = 'latest',
 			precision = 'best',
@@ -386,22 +422,23 @@ void main() {
 		{1, 1}
 	}
 	local pointSize = .01
-	local vertexGPU = self.eqObj.attrs.vertex.buffer
+	local vertexGPU = self.earthquakeLatLonPointObj.attrs.vertex.buffer
+	local texcoordGPU = self.earthquakeLatLonPointObj.attrs.texcoord.buffer
 	local vertexCPU = vertexGPU:beginUpdate()
-	local texcoordGPU = self.eqObj.attrs.texcoord.buffer
 	local texcoordCPU = texcoordGPU:beginUpdate()
-	for i,row in ipairs(eqdata.rows) do
+	for i,eq in ipairs(earthquakes) do
 		-- latitude: S = negative, N = positive
 		-- longitude: W = negative, E = positive
---print(i, row.latitude, row.longitude)
+--print(i, eq.latitude, eq.longitude)
 		for _,v in ipairs(quadVtxs) do
 			vertexCPU:emplace_back()[0]:set(
-				(row.longitude + 180) / 360 + .5 * pointSize * (v[1] * 2 - 1),
-				(row.latitude + 90) / 180 + pointSize * (v[2] * 2 - 1)
+				(eq.longitude + 180) / 360 + .5 * pointSize * (v[1] * 2 - 1),
+				(eq.latitude + 90) / 180 + pointSize * (v[2] * 2 - 1)
 			)
 			texcoordCPU:emplace_back()[0]:set(v[1] * 2 - 1, v[2] * 2 - 1)
 		end
 	end
+	assert.eq(#vertexCPU, 6 * #earthquakes)
 	vertexGPU:endUpdate()
 	texcoordGPU:endUpdate()
 	--]=====] END EARTHQUAKES
@@ -531,13 +568,14 @@ void main() {
 			v.x * s + v.y * c,
 			v.z)
 	end
-	local pointToXYZ = |row| do
+	local latLonToXYZ = |eq| do
 		local v = vec3d(0, 0, 1)   -- z+ is default
-		v = rotateX(v, -math.rad(row.latitude))
-		v = rotateY(v, math.pi - math.rad(row.longitude))
+		v = rotateX(v, -math.rad(eq.latitude))
+		v = rotateY(v, math.pi - math.rad(eq.longitude))
 		return v
 	end
 
+	-- show axii of circles
 	self.pairCrossPointsObj = GLSceneObject{
 		program = {
 			version = 'latest',
@@ -600,15 +638,16 @@ void main() {
 			useVec = true,
 		},
 	}
-	local pairCrossPoints = self.pairCrossPointsObj.attrs.vertex.buffer.vec
 
+	--[=[ build here
+	local pairCrossPoints = self.pairCrossPointsObj.attrs.vertex.buffer.vec
 	circles = table()
-	for i1=1,#eqdata.rows-1 do
-		local e1 = eqdata.rows[i1]
-		for i2=i1+1,#eqdata.rows do
-			local e2 = eqdata.rows[i2]
-			local v1 = pointToXYZ(e1)
-			local v2 = pointToXYZ(e2)
+	for i1=1,#earthquakes-1 do
+		local e1 = earthquakes[i1]
+		for i2=i1+1,#earthquakes do
+			local e2 = earthquakes[i2]
+			local v1 = latLonToXYZ(e1)
+			local v2 = latLonToXYZ(e2)
 			local torque = v1:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
 			local axisLen = torque:length()
 			local axis = torque * (1 / (math.max(axisLen, 1e-15)))
@@ -639,8 +678,11 @@ void main() {
 			end
 		end
 	end
-
 	self.pairCrossPointsObj:endUpdate()
+	--]=]
+	--[=[ or TODO all circles and just hide/show the ones associated with the current quake ...
+	circles = allCircles
+	--]=]
 
 	self:updateGrid()
 end
@@ -649,6 +691,11 @@ end
 local numCircleDivs = 100
 local numGridLines = 1
 App.updateGrid = |:| do
+	-- [=[ or just rely on those already built ... for the last earthquake ...
+	circles = earthquakes[vars.earthquakeIndex]
+		.touchingCircles:mapi(|t| allCircles[t.circle])
+	--]=]	
+
 	local vertexes = table()
 	local colors = table()
 	local geometries = table()
@@ -713,23 +760,6 @@ end
 
 
 
-local weightFields = chartCNames:mapi(|name| 'weight_'..name)
-local vars = table(
-	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
-	{
-		normalizeWeights = true,
-		drawEarth = true,
-		drawEarthquakes = true,
-		drawGreatArcs = true,
-		greatArcAlpha = .25,
-		lineWidth = 4,
-		drawAxisTorques = true,
-		axisTorquePointSize = 3,
-		lat0 = 0,	-- degrees
-		lon0 = 180,	-- degrees
-	}
-):setmetatable(nil)
-
 App.update = |:| do
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
@@ -748,14 +778,22 @@ App.update = |:| do
 
 	if vars.drawEarthquakes then
 		-- [=====[ BEGIN BEARTHQUAKES
-		local sceneObj = self.eqObj
+		local sceneObj = self.earthquakeLatLonPointObj
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
 		sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		
+		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
+		sceneObj.geometry.offset = 6 * (oldestEarthquakeIndex - 1)
+		sceneObj.geometry.count = 6 * (vars.earthquakeIndex - oldestEarthquakeIndex + 1)
+
 		sceneObj:draw()
+		
+		sceneObj.geometry.offset = nil
+		sceneObj.geometry.count = nil
 		--]=====] END EARTHQUAKES
 	end
 
@@ -781,16 +819,18 @@ gl.glLineWidth(1)
 
 	if vars.drawAxisTorques then
 		local sceneObj = self.pairCrossPointsObj
-		for _,name in ipairs(weightFields) do
-			sceneObj.uniforms[name] = vars[name]
-		end
-		sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
-		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
-		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		if #sceneObj.attrs.vertex.buffer.vec > 0 then
+			for _,name in ipairs(weightFields) do
+				sceneObj.uniforms[name] = vars[name]
+			end
+			sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
+			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 
-		gl.glPointSize(vars.axisTorquePointSize)
-		sceneObj:draw()
-		gl.glPointSize(1)
+			gl.glPointSize(vars.axisTorquePointSize)
+			sceneObj:draw()
+			gl.glPointSize(1)
+		end
 	end
 
 	App.super.update(self)
@@ -816,6 +856,16 @@ App.updateGUI = |:| do
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
 			ig.luatableCheckbox('drawAxisTorques', vars, 'drawAxisTorques')
 			ig.luatableSliderFloat('axisTorquePointSize', vars, 'axisTorquePointSize', 0, 10)
+
+			if ig.luatableSliderFloat('earthquakeIndex', vars, 'earthquakeIndex', 1, #earthquakes) then
+				vars.earthquakeIndex = math.round(vars.earthquakeIndex)
+				recalculateOldestEarthquakeIndex()
+				
+				self:updateGrid()	-- TODO don't recalc all circles, just recalc indexes used
+			end
+			ig.igText('earthquake time = '..earthquakes[vars.earthquakeIndex].time)
+			ig.igText('oldestEarthquakeIndex = '..oldestEarthquakeIndex)
+			ig.igText('oldest earthquake time = '..earthquakes[oldestEarthquakeIndex].time)
 
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -90, 90)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
