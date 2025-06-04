@@ -11,11 +11,21 @@ local vec3d = require 'vec-ffi.vec3d'
 
 local dayInSec = 60 * 60 * 24
 
+local time = require 'time'.time
+local timegm = require 'time'.timegm
+local gmtime = require 'time'.gmtime
+--[[
+print('time()', time())	-- this is time since 1970 ... your timezone ... right?
+print('gmtime', tolua(gmtime()))
+print('timegm(gmtime)', tolua(timegm(gmtime())))
+os.exit()
+--]]
 
 -- [=======[ download data
 path'cache':mkdir()
 local getDayCache = |t, force| do
-	local datestr = os.date('%Y-%m-%d', t)
+	local tt = gmtime(t)
+	local datestr = ('%04d-%02d-%02d'):format(tt.year, tt.month, tt.day)
 	local csvpath = path('cache/'..datestr..'.csv')
 	local csvstr
 	local changed
@@ -52,15 +62,19 @@ local getDayCache = |t, force| do
 	end), changed
 end
 
+
 local earthquakes = table()
-local checkTime = os.time()
+local checkTime = time()
 local prevDays = 31
-for t=checkTime - prevDays * dayInSec, checkTime - dayInSec, dayInSec do
-	local deq = getDayCache(t)
-	earthquakes:append(deq)
+do	-- I wish for-loops worked with cdata primitives ...
+	local t = checkTime - prevDays * dayInSec
+	while t <= checkTime - dayInSec do
+		local deq = getDayCache(t)
+		earthquakes:append(deq)
+		t += dayInSec
+	end
 end
 do	-- always re-download today
-	-- TODO between os.time and os.date, one of them can do offsets and one can't, so ...
 	local deq = getDayCache(checkTime, true)
 	earthquakes:append(deq)
 end
@@ -136,9 +150,20 @@ end
 
 for _,eq in ipairs(earthquakes) do
 	-- add preprocessed fields	
-	local Y,m,d,H,M,S = eq.time:match'^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d%.%d%d%dZ)$'
+	local Y,m,d,H,M,S = eq.time:match'^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d%.%d%d%d)Z$'
 	assert(Y)	-- ... and the others should be there too
-	eq.ostime = os.time{year=Y, month=m, day=d, hour=H, min=M, sec=S}
+	local mustbenumber = |x| do
+		return tonumber(x) or error("failed to parse "..tostring(x))
+	end
+	eq.date = {
+		year = mustbenumber(Y),
+		month = mustbenumber(m),
+		day = mustbenumber(d),
+		hour = mustbenumber(H),
+		min = mustbenumber(M),
+		sec = mustbenumber(S),
+	}
+	eq.ostime = timegm(eq.date)
 	eq.xyz = latLonToXYZ(eq)
 end
 earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first

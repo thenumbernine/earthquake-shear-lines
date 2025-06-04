@@ -1,0 +1,54 @@
+local vec2d = require 'vec-ffi.vec2d'
+local vec3d = require 'vec-ffi.vec3d'
+
+local rotateX = |v,th|do
+	local cs = vec2d.exp(th)
+	return vec3d(
+		v.x,
+		v.y * cs.x - v.z * cs.y,
+		v.y * cs.y + v.z * cs.x)
+end
+
+local rotateY = |v,th|do
+	local cs = vec2d.exp(th)
+	return vec3d(
+		v.x * cs.x + v.z * cs.y,
+		v.x,
+		-v.x * cs.y + v.z * cs.x)
+end
+
+local rotateZ = |v,th|do
+	local cs = vec2d.exp(th)
+	return vec3d(
+		v.x * cs.x - v.y * cs.y,
+		v.x * cs.y + v.y * cs.x,
+		v.z)
+end
+
+local basisFor = |v| do
+	local x = v:cross(vec3d(1, 0, 0))
+	local y = v:cross(vec3d(0, 1, 0))
+	local z = v:cross(vec3d(0, 0, 1))
+	local xl = x:lenSq()
+	local yl = y:lenSq()
+	local zl = z:lenSq()
+	-- TODO there's too many situations where ternary needs ()'s to save parsing... I should just change its symbols
+	return xl > yl	-- x > y
+		and (
+			xl > zl
+			and x	-- x > y, x > z
+			or z		-- z > x > y
+		)
+		or (		-- y >= x
+			yl > zl
+			and y	-- y > z, y >= x
+			or z	-- z > y >= x
+		)
+end
+
+return {
+	basisFor = basisFor,
+	rotateX = rotateX,
+	rotateY = rotateY,
+	rotateZ = rotateZ,
+}
