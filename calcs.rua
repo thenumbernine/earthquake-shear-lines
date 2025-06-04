@@ -46,7 +46,7 @@ local getDayCache = |t, force| do
 	return csvdata.rows:mapi(|eq| do
 		local neq = {}
 		for _,k in ipairs(csvdata.columns) do
-			neq[k] = eq[k]
+			neq[k] = tonumber(eq[k]) or eq[k]
 		end
 		return neq
 	end), changed

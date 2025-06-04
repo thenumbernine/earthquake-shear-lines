@@ -11,7 +11,8 @@ local dayInSec = 60 * 60 * 24
 M.greatArcAngleMin, M.greatArcAngleMax = 10, 170
 
 -- tolerance of how close a quake must be to a previous circle to consider along the geodesic
-M.quakeAlignWithPreviousGeodesicAngleThreshold = 1	-- in radians
+--M.quakeAlignWithPreviousGeodesicAngleThreshold = 1	-- in radians
+M.quakeAlignWithPreviousGeodesicAngleThreshold = 2	-- in radians
 --M.quakeAlignWithPreviousGeodesicAngleThreshold = 5	-- in radians
 --M.quakeAlignWithPreviousGeodesicAngleThreshold = 15	-- in radians
 
@@ -24,13 +25,13 @@ M.filterDuplicateTouchingArcsAngleThreshold = 0
 --M.filterDuplicateTouchingArcsAngleThreshold = 5
 
 -- when searching for great-arc circles, ignore points within this many radians of previously-considered points
---M.filterDuplicatePointsAngleThreshold = 1
+M.filterDuplicatePointsAngleThreshold = 1
 --M.filterDuplicatePointsAngleThreshold = 5
-M.filterDuplicatePointsAngleThreshold = 10
+--M.filterDuplicatePointsAngleThreshold = 10
 
 -- how far back we want to look when comparing great-arcs 
---M.timeWindowInDays = 1
-M.timeWindowInDays = 3
+M.timeWindowInDays = 1
+--M.timeWindowInDays = 3
 
 
 local basisFor = |v| do

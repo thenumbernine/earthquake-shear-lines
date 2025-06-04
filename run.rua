@@ -36,6 +36,7 @@ local vars = table(
 		drawGreatArcs = true,
 		greatArcAlpha = .1,
 		lineWidth = 1,
+		angleFade = 1,
 		--[=[ TODO
 		drawAxisTorques = true,
 		axisTorquePointSize = 3,
@@ -255,7 +256,7 @@ void main() {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
-layout(location=0) in vec2 vertex;
+layout(location=0) in vec3 vertex;
 layout(location=1) in vec2 texcoord;
 out vec2 texcoordv;
 flat out float hilite;
@@ -281,9 +282,13 @@ void main() {
 		hilite = 0.;
 	}
 
+	float magn = vertex.z;
+	const float pointSize = .4 * magn;
+	vec2 vtxofs = vertex.xy + texcoord.yx * pointSize;	//.yx cuz lat,lon = y,x
+
 	vec3 coords = vec3(
-		mod(vertex.x * 180. - latlon0.x, 180.) - 90.,	// lat in deg, [-90, 90]
-		mod(vertex.y * 360. - latlon0.y, 360.) - 180.,	// lon in deg, [-180, 180]
+		mod(vtxofs.x + 90. - latlon0.x, 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vtxofs.y + 180. - latlon0.y, 360.) - 180.,	// lon in deg, [-180, 180]
 		1e+3);					// height in meters
 
 	vec3 pos = 0.
@@ -307,8 +312,12 @@ in vec2 texcoordv;
 flat in float hilite;
 out vec4 fragColor;
 void main() {
-	if (dot(texcoordv,texcoordv) > 1.) discard;
+	float lenSq = dot(texcoordv, texcoordv);
+	if (lenSq > 1.) discard;
 	fragColor = vec4(1., .5 * (1. - hilite), 0., 1.);
+	if (lenSq > .9*.9) {
+		fragColor = vec4(0., 0., 0., 1.);
+	}
 }
 ]],
 		},
@@ -316,7 +325,7 @@ void main() {
 			mode = gl.GL_TRIANGLES,
 		},
 		vertexes = {
-			dim = 2,
+			dim = 3,
 			useVec = true,
 		},
 		attrs = {
@@ -338,7 +347,6 @@ void main() {
 		{1, 0},
 		{1, 1}
 	}
-	local pointSize = .01
 	local vertexGPU = self.earthquakeLatLonPointObj.attrs.vertex.buffer
 	local texcoordGPU = self.earthquakeLatLonPointObj.attrs.texcoord.buffer
 	local vertexCPU = vertexGPU:beginUpdate()
@@ -348,10 +356,7 @@ void main() {
 		-- longitude: W = negative, E = positive
 --print(i, eq.latitude, eq.longitude)
 		for _,v in ipairs(quadVtxs) do
-			vertexCPU:emplace_back()[0]:set(
-				(eq.latitude + 90) / 180 + pointSize * (v[2] * 2 - 1),
-				(eq.longitude + 180) / 360 + .5 * pointSize * (v[1] * 2 - 1)
-			)
+			vertexCPU:emplace_back()[0]:set(eq.latitude, eq.longitude, eq.mag)
 			texcoordCPU:emplace_back()[0]:set(v[1] * 2 - 1, v[2] * 2 - 1)
 		end
 	end
@@ -381,7 +386,7 @@ out vec4 colorv;
 uniform vec3 color;	// base color
 uniform vec3 axis2, axis3;	// axis dual = basis of circle
 uniform float influence;	// additive influence, 
-uniform vec4 centerPos;	// .w = centerAngle
+uniform vec4 centerPos;	// .w = cos(centerAngle) * angleFade
 
 
 uniform mat4 mvProjMat;
@@ -444,7 +449,7 @@ void main() {
 	float theta = vertex * 2. * M_PI;
 	vec3 v = axis2 * cos(theta) + axis3 * sin(theta);
 	float cosAngle = dot(v, centerPos.xyz);
-	float alpha = clamp(cosAngle / cos(centerPos.w), 0., 1.);
+	float alpha = clamp(cosAngle * centerPos.w, 0., 1.);
 	colorv = vec4(color * influence, alpha);
 
 	vec2 latlon = cartesianToLatLonWGS84(v).xy;
@@ -680,6 +685,31 @@ App.update = |:| do
 		--]=====] END CLIP FROM GEOGRAPHIC-CHARTS
 	end
 
+	if vars.drawGreatArcs then
+		local sceneObj = self.circlesObj
+gl.glLineWidth(vars.lineWidth)
+gl.glEnable(gl.GL_BLEND)
+gl.glDepthMask(0)
+		for _,c in ipairs(circles) do
+			for _,name in ipairs(weightFields) do
+				sceneObj.uniforms[name] = vars[name]
+			end
+			sceneObj.uniforms.latlon0 = {vars.lat0, vars.lon0}
+			sceneObj.uniforms.color = {c.color:unpack()}
+			sceneObj.uniforms.axis2 = {c.axis2:unpack()}
+			sceneObj.uniforms.axis3 = {c.axis3:unpack()}
+			sceneObj.uniforms.influence = c.influence
+			sceneObj.uniforms.centerPos = {c.centerPos.x, c.centerPos.y, c.centerPos.z, vars.angleFade / math.cos(c.centerAngle)}
+			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+			sceneObj.uniforms.alpha = vars.greatArcAlpha
+			sceneObj:draw()
+		end
+gl.glDepthMask(1)
+gl.glDisable(gl.GL_BLEND)
+gl.glLineWidth(1)
+	end
+
 	if vars.drawEarthquakes then
 		gl.glDepthFunc(gl.GL_LEQUAL)
 		local sceneObj = self.earthquakeLatLonPointObj
@@ -700,31 +730,6 @@ App.update = |:| do
 		sceneObj.geometry.offset = nil
 		sceneObj.geometry.count = nil
 		gl.glDepthFunc(gl.GL_LESS)
-	end
-
-	if vars.drawGreatArcs then
-		local sceneObj = self.circlesObj
-gl.glLineWidth(vars.lineWidth)
-gl.glEnable(gl.GL_BLEND)
-gl.glDepthMask(0)
-		for _,c in ipairs(circles) do
-			for _,name in ipairs(weightFields) do
-				sceneObj.uniforms[name] = vars[name]
-			end
-			sceneObj.uniforms.latlon0 = {vars.lat0, vars.lon0}
-			sceneObj.uniforms.color = {c.color:unpack()}
-			sceneObj.uniforms.axis2 = {c.axis2:unpack()}
-			sceneObj.uniforms.axis3 = {c.axis3:unpack()}
-			sceneObj.uniforms.influence = c.influence
-			sceneObj.uniforms.centerPos = {c.centerPos.x, c.centerPos.y, c.centerPos.z, c.centerAngle}
-			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
-			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-			sceneObj.uniforms.alpha = vars.greatArcAlpha
-			sceneObj:draw()
-		end
-gl.glDepthMask(1)
-gl.glDisable(gl.GL_BLEND)
-gl.glLineWidth(1)
 	end
 
 	--[=[ TODO
@@ -801,6 +806,7 @@ App.updateGUI = |:| do
 			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
+			ig.luatableInputFloat('angleFade', vars, 'angleFade')
 			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
 				self:refreshRelevantCircles()
 			end
@@ -849,7 +855,9 @@ App.updateGUI = |:| do
 				end
 			end
 
-
+			ig.igEndMenu()
+		end
+		if ig.igBeginMenu'circles:' then
 			if ig.luatableInputFloat('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
 				self:recalcAllCircles()
 			end
