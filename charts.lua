@@ -5,6 +5,7 @@ local chartNames = table{	-- which charts we want to allow ...
 	'Azimuthal equidistant',
 	'Mollweide',
 	'WGS84',
+	'sphere',
 }
 local charts = table()
 for i,name in ipairs(chartNames) do

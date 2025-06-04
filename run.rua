@@ -25,6 +25,132 @@ local checkDuration = 60*5	-- re-check every 5 mins
 local calcCircles = require 'circles'
 
 
+for _,name in ipairs(chartCNames) do
+	chartCode ..= '\nuniform float weight_'..name..';'
+end
+
+chartCode ..= [[
+
+//////// BEGIN GLSL THAT'S ALSO IN MY EARTH MAGNETIC FIELD MODEL CODE
+// ported from WMM2020 GeomagnetismLibrary.c
+// expects xyz in cartesian units earth-semimajor-axis
+// output is in (radians, radians, km)
+// TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
+vec3 cartesianToLatLonWGS84(vec3 pos) {
+	// lowercase WGS84_a is in km, uppercase WGS84_a is in m ... i know i need to fix this ...
+	pos *= WGS84_a;	// convert from semimajor-axis units to km
+	float modified_b = pos.z < 0. ? -WGS84_b : WGS84_b;
+	float r = length(pos.xy);
+
+	float e = (modified_b * pos.z - (WGS84_a * WGS84_a - modified_b * modified_b)) / (WGS84_a * r);
+	float f = (modified_b * pos.z + (WGS84_a * WGS84_a - modified_b * modified_b)) / (WGS84_a * r);
+	float p = (4. / 3.) * (e * f + 1.);
+	float q = 2. * (e * e - f * f);
+	float d = p * p * p + q * q;
+
+	float v;
+	if  (d >= 0.) {
+		v = pow(sqrt(d) - q, 1./3.) - pow(sqrt(d) + q, 1./3.);
+	} else {
+		v = 2. * sqrt(-p) * cos(acos(q / (p * sqrt(-p))) / 3.);
+	}
+
+	if (v * v < abs(p)) {
+		v = -(v * v * v + 2. * q) / (3. * p);
+	}
+
+	float g = (sqrt(e * e + v) + e) / 2.;
+	float t = sqrt(g * g + (f - v * g) / (2. * g - e)) - g;
+
+	float phi = atan((WGS84_a * (1. - t * t)) / (2. * modified_b * t));	// latitude
+
+	float height = (r - WGS84_a * t) * cos(phi) + (pos.z - modified_b) * sin(phi);
+	float lambda = atan(pos.y, pos.x);	// longitude
+	lambda += M_PI;
+	lambda = mod(lambda, 2. * M_PI);
+	lambda -= M_PI;
+	// longitude = lambda = range of [-pi, pi]
+	return vec3(phi, lambda, height * 1e+3);		// km back to m
+}
+//////// END GLSL THAT'S ALSO IN MY EARTH MAGNETIC FIELD MODEL CODE
+
+vec2 vec2exp(float rad) {
+	return vec2(cos(rad), sin(rad));
+}
+
+vec3 rotateX(vec3 v, float rad) {
+	vec2 cs = vec2exp(rad);
+	return vec3(
+		v.x,
+		v.y * cs.x - v.z * cs.y,
+		v.y * cs.y + v.z * cs.x);
+}
+
+vec3 rotateY(vec3 v, float rad) {
+	vec2 cs = vec2exp(rad);
+	return vec3(
+		v.x * cs.x + v.z * cs.y,
+		v.y,
+		-v.x * cs.y + v.z * cs.x);
+}
+
+vec3 rotateZ(vec3 v, float rad) {
+	vec2 cs = vec2exp(rad);
+	return vec3(
+		v.x * cs.x - v.y * cs.y,
+		v.x * cs.y + v.y * cs.x,
+		v.z);
+}
+
+// hmm, floating point accuracy issue ...
+vec2 applyLatLonRoll0(vec2 latlon) {
+#if 0 // wgs84
+	vec3 pos = chart_WGS84(vec3(latlon, 0.));
+	return cartesianToLatLonWGS84(pos / WGS84_a).xy * (180. /  M_PI);
+#else // sphere
+	vec3 pos = chart_sphere(vec3(latlon, 0.));
+pos.xyz = pos.zxy;
+
+	vec2 latcs = vec2exp(latlonroll0.x * M_PI / 180.);
+	vec2 loncs = vec2exp(latlonroll0.y * M_PI / 180.);
+	vec2 rollcs = vec2exp(latlonroll0.z * M_PI / 180.);
+	pos = rotateX(pos, latlonroll0.z * M_PI / 180.);
+	pos = rotateY(pos, latlonroll0.x * M_PI / 180.);
+	pos = rotateZ(pos, latlonroll0.y * M_PI / 180.);
+
+	// chartInv_sphere expects north pole to be z+, prime meridian to be x+
+pos.zxy = pos.xyz;
+	return chartInv_sphere(pos).xy;
+#endif
+}
+
+// hmm, floating point accuracy issue ...
+vec2 applyLatLonRoll0Inv(vec2 latlon) {
+#if 0 // wgs84
+	vec3 pos = chart_WGS84(vec3(latlon, 0.));
+	return cartesianToLatLonWGS84(pos / WGS84_a).xy * (180. /  M_PI);
+#else // sphere
+	vec3 pos = chart_sphere(vec3(latlon, 0.));
+pos.xyz = pos.zxy;
+
+	vec2 latcs = vec2exp(latlonroll0.x * M_PI / 180.);
+	vec2 loncs = vec2exp(latlonroll0.y * M_PI / 180.);
+	vec2 rollcs = vec2exp(latlonroll0.z * M_PI / 180.);
+	
+	pos = rotateZ(pos, -latlonroll0.y * M_PI / 180.);
+	pos = rotateY(pos, -latlonroll0.x * M_PI / 180.);
+	pos = rotateX(pos, -latlonroll0.z * M_PI / 180.);
+
+	// chartInv_sphere expects north pole to be z+, prime meridian to be x+
+pos.zxy = pos.xyz;
+	return chartInv_sphere(pos).xy;
+#endif
+}
+
+
+]]
+
+
 local weightFields = chartCNames:mapi(|name| 'weight_'..name)
 local vars = table(
 	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
@@ -44,6 +170,7 @@ local vars = table(
 		--]=]
 		lat0 = 0,	-- degrees
 		lon0 = 0, -- 180,	-- degrees
+		roll0 = 0,
 		earthquakeIndex = #earthquakes,
 	}
 ):setmetatable(nil)
@@ -94,8 +221,8 @@ App.initGL = |:| do
 		for j=0,jdivs do
 			local v = j/jdivs
 			--local lambda = math.rad((v * 2 - 1) * 180)
-			vertexes:insert(u)	-- lat, lon = u, v
-			vertexes:insert(v) -- transposed from texcoord space in texcoord space
+			vertexes:insert(u * 180 - 90)	-- lat, lon = u, v
+			vertexes:insert(v * 360 - 180) -- transposed from texcoord space in texcoord space
 		end
 	end
 	self.vertexBuf = GLArrayBuffer{
@@ -132,21 +259,22 @@ out vec3 posv;
 
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
-uniform vec2 latlon0;
+uniform vec3 latlonroll0;
 
 <?=chartCode?>
 
-<? for _,name in ipairs(chartCNames) do
-?>uniform float weight_<?=name?>;
-<? end
-?>
-
 void main() {
-	texcoordv = vertex.yx;	//(lat, lon) in [0, 1]
+	vec2 vtxofs = applyLatLonRoll0Inv(vertex);
+
+	//(lat, lon) in [0, 1]
+	texcoordv = vec2(
+		vtxofs.y / 360. + .5,
+		vtxofs.x / 180. + .5
+	);
 
 	vec3 coords = vec3(
-		mod(vertex.x * 180. - latlon0.x, 180.) - 90.,	// lat in deg, [-90, 90]
-		mod(vertex.y * 360. - latlon0.y, 360.) - 180.,	// lon in deg, [-180, 180]
+		mod(vertex.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vertex.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
 		0.);						// height in meters
 
 	vec3 pos = 0.
@@ -212,7 +340,7 @@ void main() {
 --]=]
 
 
-			fragmentCode = template([[
+			fragmentCode = template[[
 in vec2 texcoordg;
 out vec4 fragColor;
 
@@ -223,9 +351,7 @@ void main() {
 	fragColor = texture(earthTex, vec2(texcoordg.x, 1. - texcoordg.y));
 	fragColor.a = alpha;
 }
-]],			{
-				chartCode = chartCode,
-			}),
+]],
 			uniforms = {
 				earthTex = 0,
 				alpha = .5,
@@ -264,16 +390,11 @@ flat out float hilite;
 
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
-uniform vec2 latlon0;
+uniform vec3 latlonroll0;
 uniform float pointSize;
 uniform uint hiliteIndex;
 
 <?=chartCode?>
-
-<? for _,name in ipairs(chartCNames) do
-?>uniform float weight_<?=name?>;
-<? end
-?>
 
 void main() {
 	texcoordv = texcoord;
@@ -283,10 +404,12 @@ void main() {
 	} else {
 		hilite = 0.;
 	}
+	
+	vec2 vtxofs = applyLatLonRoll0(vertex.xy);
 
 	vec3 coords = vec3(
-		mod(vertex.x + 90. - latlon0.x, 180.) - 90.,	// lat in deg, [-90, 90]
-		mod(vertex.y + 180. - latlon0.y, 360.) - 180.,	// lon in deg, [-180, 180]
+		mod(vtxofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vtxofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
 		1e+3);					// height in meters
 
 	vec3 pos = 0.
@@ -300,9 +423,10 @@ void main() {
 		pos = vec3(pos.z, pos.x, pos.y);
 	}
 
+
 	mat3 e = mat3(vec3(0.), vec3(0.), vec3(0.))
 <? for _,name in ipairs(chartCNames) do
-?>		+ weight_<?=name?> * chart_<?=name?>_basis(vec3(vertex.xy, 0.))
+?>		+ weight_<?=name?> * chart_<?=name?>_basis(vec3(coords.xy, 0.))
 <? end
 ?>	;
 	float magn = vertex.z;
@@ -399,59 +523,9 @@ uniform vec4 centerPos;	// .w = cos(centerAngle) * angleFade
 
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
-uniform vec2 latlon0;	// used for texturing, TODO FIXME proper 3d transform
+uniform vec3 latlonroll0;	// used for texturing, TODO FIXME proper 3d transform
 
-//////// BEGIN CODE MATCHING CHART CODE ABOVE
 <?=chartCode?>
-
-<? for _,name in ipairs(chartCNames) do
-?>uniform float weight_<?=name?>;
-<? end
-?>
-//////// END CODE MATCHING CHART CODE ABOVE
-
-//////// BEGIN GLSL CARTESIANTOLATLONWGS84 THAT'S ALSO IN MY EARTH MAGNETIC FIELD MODEL CODE
-// ported from WMM2020 GeomagnetismLibrary.c
-// expects xyz in cartesian units earth-semimajor-axis
-// output is in (radians, radians, km)
-// TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
-vec3 cartesianToLatLonWGS84(vec3 pos) {
-	// lowercase WGS84_a is in km, uppercase WGS84_a is in m ... i know i need to fix this ...
-	pos *= WGS84_a;	// convert from semimajor-axis units to km
-	float modified_b = pos.z < 0. ? -WGS84_b : WGS84_b;
-	float r = length(pos.xy);
-
-	float e = (modified_b * pos.z - (WGS84_a * WGS84_a - modified_b * modified_b)) / (WGS84_a * r);
-	float f = (modified_b * pos.z + (WGS84_a * WGS84_a - modified_b * modified_b)) / (WGS84_a * r);
-	float p = (4. / 3.) * (e * f + 1.);
-	float q = 2. * (e * e - f * f);
-	float d = p * p * p + q * q;
-
-	float v;
-	if  (d >= 0.) {
-		v = pow(sqrt(d) - q, 1./3.) - pow(sqrt(d) + q, 1./3.);
-	} else {
-		v = 2. * sqrt(-p) * cos(acos(q / (p * sqrt(-p))) / 3.);
-	}
-
-	if (v * v < abs(p)) {
-		v = -(v * v * v + 2. * q) / (3. * p);
-	}
-
-	float g = (sqrt(e * e + v) + e) / 2.;
-	float t = sqrt(g * g + (f - v * g) / (2. * g - e)) - g;
-
-	float phi = atan((WGS84_a * (1. - t * t)) / (2. * modified_b * t));	// latitude
-
-	float height = (r - WGS84_a * t) * cos(phi) + (pos.z - modified_b) * sin(phi);
-	float lambda = atan(pos.y, pos.x);	// longitude
-	lambda += M_PI;
-	lambda = mod(lambda, 2. * M_PI);
-	lambda -= M_PI;
-	// longitude = lambda = range of [-pi, pi]
-	return vec3(phi, lambda, height * 1e+3);		// km back to m
-}
-//////// END GLSL CARTESIANTOLATLONWGS84 THAT'S ALSO IN MY EARTH MAGNETIC FIELD MODEL CODE
 
 void main() {
 	float theta = vertex * 2. * M_PI;
@@ -465,10 +539,12 @@ void main() {
 	latlon.x *= 180. / M_PI;	//[-90, 90]
 	latlon.y *= 180. / M_PI;	//[-180, 180]
 	
+	vec2 latlonofs = applyLatLonRoll0(latlon);
+	
 	//////// BEGIN CODE MATCHING CHART CODE ABOVE
 	vec3 coords = vec3(
-		mod(latlon.x + 90. - latlon0.x, 180.) - 90.,	// lat in deg, [-90, 90]
-		mod(latlon.y + 180. - latlon0.y, 360.) - 180.,	// lon in deg, [-180, 180]
+		mod(latlonofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(latlonofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
 		2e+3);						// height in meters
 
 	vec3 pos = 0.
@@ -553,23 +629,17 @@ void main() {
 layout(location=0) in vec2 vertex;
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
-uniform vec2 latlon0;
+uniform vec3 latlonroll0;
 
-//////// BEGIN CODE MATCHING CHART CODE ABOVE
 <?=chartCode?>
 
-<? for _,name in ipairs(chartCNames) do
-?>uniform float weight_<?=name?>;
-<? end
-?>
-
-//////// END CODE MATCHING CHART CODE ABOVE
-
 void main() {
+	vec2 vtxofs = applyLatLonRoll0(vertex);
+	
 	//////// BEGIN CODE MATCHING CHART CODE ABOVE
 	vec3 coords = vec3(
-		mod(vertex.y * 180. - latlon0.y, 180.) - 90.,	// lat in deg, [-90, 90]
-		mod(vertex.x * 360. - latlon0.x, 360.) - 180.,	// lon in deg, [-180, 180]
+		mod(vtxofs.x + 90.., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vtxofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
 		2e+3);						// height in meters
 
 	vec3 pos = 0.
@@ -629,8 +699,8 @@ void main() {
 			for s=-1,1,2 do
 				local x,y,z = (s * torque):unpack()
 				local phi, lambda = cartesianToLatLonWGS84(z,x,y)	-- hmm ...
-				pairCrossPoints:insert(((math.deg(lambda) + 180) / 360) % 1)
-				pairCrossPoints:insert(((math.deg(phi) + 90) / 180) % 1)
+				pairCrossPoints:insert((((math.deg(phi) + 90) / 180) % 1) * 180 - 90)
+				pairCrossPoints:insert((((math.deg(lambda) + 180) / 360) % 1) * 360 - 180)
 			end
 
 			local angle = math.acos(v1:dot(v2))
@@ -686,7 +756,7 @@ App.update = |:| do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
-		sceneObj.uniforms.latlon0 = {vars.lat0, vars.lon0}
+		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj:draw()
@@ -702,7 +772,7 @@ gl.glDepthMask(0)
 			for _,name in ipairs(weightFields) do
 				sceneObj.uniforms[name] = vars[name]
 			end
-			sceneObj.uniforms.latlon0 = {vars.lat0, vars.lon0}
+			sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 			sceneObj.uniforms.color = {c.color:unpack()}
 			sceneObj.uniforms.axis2 = {c.axis2:unpack()}
 			sceneObj.uniforms.axis3 = {c.axis3:unpack()}
@@ -724,10 +794,11 @@ gl.glLineWidth(1)
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
-		sceneObj.uniforms.latlon0 = {vars.lat0, vars.lon0}
+		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.pointSize = vars.pointSize
+		sceneObj.uniforms.hiliteIndex = vars.earthquakeIndex - 1
 
 		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
 		sceneObj.geometry.offset = 6 * (oldestEarthquakeIndex - 1)
@@ -747,7 +818,7 @@ gl.glLineWidth(1)
 			for _,name in ipairs(weightFields) do
 				sceneObj.uniforms[name] = vars[name]
 			end
-			sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
+			sceneObj.uniforms.latlonroll0 = {vars.lon0, vars.lat0, vars.roll0}
 			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 
@@ -838,6 +909,7 @@ App.updateGUI = |:| do
 
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -90, 90)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
+			ig.luatableSliderFloat('roll0', vars, 'roll0', -180, 180)
 			ig.luatableCheckbox('normalize weights', vars, 'normalizeWeights')
 			local changed
 			for _,field in ipairs(weightFields) do
