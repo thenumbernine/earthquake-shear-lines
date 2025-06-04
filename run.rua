@@ -168,9 +168,9 @@ local vars = table(
 		drawAxisTorques = true,
 		axisTorquePointSize = 3,
 		--]=]
-		lat0 = 0,	-- degrees
-		lon0 = 0, -- 180,	-- degrees
-		roll0 = 0,
+		lat0 = 0,		-- degrees
+		lon0 = -155,	-- degrees
+		roll0 = 0,		-- degrees
 		earthquakeIndex = #earthquakes,
 	}
 ):setmetatable(nil)
@@ -214,7 +214,7 @@ App.initGL = |:| do
 	-- [=====[ BEGIN CLIP FROM GEOGRAPHIC-CHARTS
 	local vertexes = table()
 	local idivs = 100
-	local jdivs = 100
+	local jdivs = 200
 	for i=0,idivs do
 		local u = i/idivs
 		--local phi = math.rad((u * 2 - 1) * 90)
@@ -328,10 +328,22 @@ void main() {
 
 	gl_Position = gl_in[1].gl_Position;
 	texcoordg = texcoordv[1];
+	if (texcoordv[1].x - texcoordv[0].x > .5) {
+		texcoordg.x -= 1.;
+	}
+	if (texcoordv[1].x - texcoordv[0].x < -.5) {
+		texcoordg.x += 1.;
+	}
 	EmitVertex();
 
 	gl_Position = gl_in[2].gl_Position;
 	texcoordg = texcoordv[2];
+	if (texcoordv[2].x - texcoordv[0].x > .5) {
+		texcoordg.x -= 1.;
+	}
+	if (texcoordv[2].x - texcoordv[0].x < -.5) {
+		texcoordg.x += 1.;
+	}
 	EmitVertex();
 
 	EndPrimitive();
@@ -362,9 +374,15 @@ void main() {
 		texs = {
 			GLTex2D{
 				filename = 'earth-color.png',
-				minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
 				magFilter = gl.GL_LINEAR,
-				generateMipmap = true,
+				minFilter = gl.GL_NEAREST,
+				--minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+				--generateMipmap = true,
+				wrap = {
+					s = gl.GL_REPEAT,
+					--t = gl.GL_CLAMP_TO_EDGE,
+					t = gl.GL_CLAMP_TO_BORDER,
+				},
 			}:unbind(),
 		},
 		uniforms = {
@@ -518,7 +536,8 @@ out vec4 colorv;
 uniform vec3 color;	// base color
 uniform vec3 axis2, axis3;	// axis dual = basis of circle
 uniform float influence;	// additive influence, 
-uniform vec4 centerPos;	// .w = cos(centerAngle) * angleFade
+uniform float angleFade;
+uniform vec4 centerPos;	// .w = cos(centerAngle)
 
 
 uniform mat4 mvProjMat;
@@ -531,7 +550,7 @@ void main() {
 	float theta = vertex * 2. * M_PI;
 	vec3 v = axis2 * cos(theta) + axis3 * sin(theta);
 	float cosAngle = dot(v, centerPos.xyz);
-	float alpha = clamp(cosAngle * centerPos.w, 0., 1.);
+	float alpha = clamp(cosAngle * centerPos.w + angleFade, 0., 1.);
 	colorv = vec4(color * influence, alpha);
 
 	vec2 latlon = cartesianToLatLonWGS84(v).xy;
@@ -777,7 +796,8 @@ gl.glDepthMask(0)
 			sceneObj.uniforms.axis2 = {c.axis2:unpack()}
 			sceneObj.uniforms.axis3 = {c.axis3:unpack()}
 			sceneObj.uniforms.influence = c.influence
-			sceneObj.uniforms.centerPos = {c.centerPos.x, c.centerPos.y, c.centerPos.z, vars.angleFade / math.cos(c.centerAngle)}
+			sceneObj.uniforms.angleFade = vars.angleFade
+			sceneObj.uniforms.centerPos = {c.centerPos.x, c.centerPos.y, c.centerPos.z, 1. / math.cos(c.centerAngle)}
 			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 			sceneObj.uniforms.alpha = vars.greatArcAlpha
