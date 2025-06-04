@@ -11,27 +11,8 @@ local ig = require 'imgui'
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
 
--- [=======[ TODO cache calcs somehow
-local allCharts = require 'geographic-charts'
-local chartNames = table{	-- which charts we want to allow ...
-	'Equirectangular',
-	'Azimuthal equidistant',
-	'Mollweide',
-	'WGS84',
-}
-local charts = table()
-for i,name in ipairs(chartNames) do
-	local chart = allCharts![name]
-	charts[i] = chart
-	charts[name] = chart
-end
-for _,name in ipairs(chartNames) do
-	charts[name]?:build()
-end
-
-local chartCNames = charts:mapi(|chart| chart:getCName())
-local chartCode = require 'geographic-charts.code'(charts)
---]=======]
+local chartCode = require 'charts'.chartCode
+local chartCNames = require 'charts'.chartCNames
 
 local calcs = require 'calcs'
 local earthquakes = calcs.earthquakes
@@ -369,18 +350,33 @@ void main() {
 	texcoordGPU:endUpdate()
 	--]=====] END EARTHQUAKES
 
-	-- [=====[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
-	self.circlesShader= GLProgram{
-		version = 'latest',
-		precision = 'best',
-		vertexCode = template([[
-layout(location=0) in vec2 vertex;
-layout(location=1) in vec4 color;
+	local numCircleDivs = 100
+	self.circlesObj = GLSceneObject{
+		-- TODO geometry shader the resolution? or can they even spit out that many vertexes?
+		vertexes = {
+			dim = 1,
+			data = range(numCircleDivs):mapi(|i| (i-.5)/numCircleDivs),
+		},
+		geometry = {
+			mode = gl.GL_LINE_LOOP,
+		},
+		program = {
+			version = 'latest',
+			precision = 'best',
+			vertexCode = template([[
+layout(location=0) in float vertex;
 out vec3 posv;
 out vec4 colorv;
+
+uniform vec3 color;	// base color
+uniform vec3 axis2, axis3;	// axis dual = basis of circle
+uniform float influence;	// additive influence, 
+uniform vec4 centerPos;	// .w = centerAngle
+
+
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
-uniform vec2 latlon0;
+uniform vec2 latlon0;	// used for texturing, TODO FIXME proper 3d transform
 
 //////// BEGIN CODE MATCHING CHART CODE ABOVE
 <?=chartCode?>
@@ -389,16 +385,69 @@ uniform vec2 latlon0;
 ?>uniform float weight_<?=name?>;
 <? end
 ?>
-
 //////// END CODE MATCHING CHART CODE ABOVE
 
+//////// BEGIN GLSL CARTESIANTOLATLONWGS84 THAT'S ALSO IN MY EARTH MAGNETIC FIELD MODEL CODE
+// ported from WMM2020 GeomagnetismLibrary.c
+// expects xyz in cartesian units earth-semimajor-axis
+// output is in (radians, radians, km)
+// TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
+vec3 cartesianToLatLonWGS84(vec3 pos) {
+	// lowercase WGS84_a is in km, uppercase WGS84_a is in m ... i know i need to fix this ...
+	pos *= WGS84_a;	// convert from semimajor-axis units to km
+	float modified_b = pos.z < 0. ? -WGS84_b : WGS84_b;
+	float r = length(pos.xy);
+
+	float e = (modified_b * pos.z - (WGS84_a * WGS84_a - modified_b * modified_b)) / (WGS84_a * r);
+	float f = (modified_b * pos.z + (WGS84_a * WGS84_a - modified_b * modified_b)) / (WGS84_a * r);
+	float p = (4. / 3.) * (e * f + 1.);
+	float q = 2. * (e * e - f * f);
+	float d = p * p * p + q * q;
+
+	float v;
+	if  (d >= 0.) {
+		v = pow(sqrt(d) - q, 1./3.) - pow(sqrt(d) + q, 1./3.);
+	} else {
+		v = 2. * sqrt(-p) * cos(acos(q / (p * sqrt(-p))) / 3.);
+	}
+
+	if (v * v < abs(p)) {
+		v = -(v * v * v + 2. * q) / (3. * p);
+	}
+
+	float g = (sqrt(e * e + v) + e) / 2.;
+	float t = sqrt(g * g + (f - v * g) / (2. * g - e)) - g;
+
+	float phi = atan((WGS84_a * (1. - t * t)) / (2. * modified_b * t));	// latitude
+
+	float height = (r - WGS84_a * t) * cos(phi) + (pos.z - modified_b) * sin(phi);
+	float lambda = atan(pos.y, pos.x);	// longitude
+	lambda += M_PI;
+	lambda = mod(lambda, 2. * M_PI);
+	lambda -= M_PI;
+	// longitude = lambda = range of [-pi, pi]
+	return vec3(phi, lambda, height * 1e+3);		// km back to m
+}
+//////// END GLSL CARTESIANTOLATLONWGS84 THAT'S ALSO IN MY EARTH MAGNETIC FIELD MODEL CODE
+
 void main() {
-	colorv = color;
+	float theta = vertex * 2. * M_PI;
+	vec3 v = axis2 * cos(theta) + axis3 * sin(theta);
+	float cosAngle = dot(v, centerPos.xyz);
+	float alpha = clamp(cosAngle / cos(centerPos.w), 0., 1.);
+	colorv = vec4(color * influence, alpha);
+
+	vec2 latlon = cartesianToLatLonWGS84(v).xy;
+	// ... to degrees 
+	latlon.x *= 180. / M_PI;	//[-90, 90]
+	latlon.y *= 180. / M_PI;	//[-180, 180]
+	latlon.x += 90.;	// hmm why is this here ....
+
 
 	//////// BEGIN CODE MATCHING CHART CODE ABOVE
 	vec3 coords = vec3(
-		mod(vertex.y * 180. - latlon0.y, 180.) - 90.,	// lat in deg, [-90, 90]
-		mod(vertex.x * 360. - latlon0.x, 360.) - 180.,	// lon in deg, [-180, 180]
+		mod(latlon.x - latlon0.x, 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(latlon.y - latlon0.y, 360.) - 180.,	// lon in deg, [-180, 180]
 		2e+3);						// height in meters
 
 	vec3 pos = 0.
@@ -417,17 +466,17 @@ void main() {
 	gl_Position = mvProjMat * vec4(pos, 1.);
 	//////// END CODE MATCHING CHART CODE ABOVE
 }
-]],		{
-			chartCode = chartCode,
-			chartCNames = chartCNames,
-		}),
+]],			{
+				chartCode = chartCode,
+				chartCNames = chartCNames,
+			}),
 
 -- [=[ but really just don't use this, just cull the vertexes in the array buffer
 -- then again, this does let me split up line loops.
-		-- lets see if we can hide lines that loop from lon=-180 to lon=+180 and go across the equirectangular/mollweide/most 2D projections
-		-- TODO I could use this for the circle tesselation to begin with.  just pass the angle + axis.
-		-- TODO TODO once I do that, I could also just do the cartesian-to-wgs84 in the fragment, then apply the charts in the fragment.
-		geometryCode = [[
+			-- lets see if we can hide lines that loop from lon=-180 to lon=+180 and go across the equirectangular/mollweide/most 2D projections
+			-- TODO I could use this for the circle tesselation to begin with.  just pass the angle + axis.
+			-- TODO TODO once I do that, I could also just do the cartesian-to-wgs84 in the fragment, then apply the charts in the fragment.
+			geometryCode = [[
 layout (lines) in;
 layout (line_strip, max_vertices = 2) out;
 
@@ -453,7 +502,7 @@ void main() {
 }
 ]],
 --]=]
-		fragmentCode = [[
+			fragmentCode = [[
 in vec4 colorg;		// using geometry shader
 //in vec4 colorv;	// not using geometry shader
 out vec4 fragColor;
@@ -464,42 +513,14 @@ void main() {
 	fragColor.a *= alpha;
 }
 ]],
-	}:useNone()
-	--]=====] END COPY FROM EARTH TRANSPORT NETWORK
+		},
+	}
 
 
 
 	gl.glEnable(gl.GL_DEPTH_TEST)
 	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE) --gl.GL_ONE_MINUS_SRC_ALPHA)
 
-
-	local rotateX = |v, theta| do
-		local c, s = math.cos(theta), math.sin(theta)
-		return vec3d(
-			v.x,
-			v.y * c - v.z * s,
-			v.y * s + v.z * c)
-	end
-	local rotateY = |v, theta| do
-		local c, s = math.cos(theta), math.sin(theta)
-		return vec3d(
-			v.x * c + v.z * s,
-			v.y,
-			v.x * s - v.z * c)
-	end
-	local rotateZ = |v, theta| do
-		local c, s = math.cos(theta), math.sin(theta)
-		return vec3d(
-			v.x * c - v.y * s,
-			v.x * s + v.y * c,
-			v.z)
-	end
-	local latLonToXYZ = |eq| do
-		local v = vec3d(0, 0, 1)   -- z+ is default
-		v = rotateX(v, -math.rad(eq.latitude))
-		v = rotateY(v, math.pi - math.rad(eq.longitude))
-		return v
-	end
 
 	--[=[ build here
 	-- show axii of circles
@@ -614,17 +635,13 @@ void main() {
 	self:refreshCircles()
 end
 
--- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
-local numCircleDivs = 100
-local numGridLines = 1
 App.refreshCircles = |:| do
-	-- [=[ show all circles touching our currently selected
 	if vars.showOnlySelectedEarthquakeArcs then
+		-- show all circles touching our currently selected
 		circles = earthquakes[vars.earthquakeIndex]
 			.touchingCircles:mapi(|t| allCircles[t.circle])
-	--]=]
-	-- [=[ show all circles touching any active earthquakes in the last timeframe
 	else
+		-- show all circles touching any active earthquakes in the last timeframe
 		local circleIndexes = table()
 		for i=oldestEarthquakeIndex,vars.earthquakeIndex do
 			for _,ci in ipairs(circlesMadeByQuakes[i]) do
@@ -633,82 +650,7 @@ App.refreshCircles = |:| do
 		end
 		circles = circleIndexes:keys():sort():mapi(|ci| allCircles[ci])
 	end
-	--]=]
-
-	local vertexes = table()
-	local colors = table()
-	local geometries = table()
-	for _,circle in ipairs(circles) do
-		local indexStart = #vertexes / 2
-		colors:append(circle.colors)
-		vertexes:append(circle.vertexes)
-		local indexEnd = #vertexes / 2
-
-		geometries:insert{
-			mode = gl.GL_LINE_LOOP,
-			offset = indexStart,
-			count = indexEnd - indexStart,
-		}
-		--[=[
-		local circleAngle = circle.angle
-		local a1 = circle.axis
-		local a2 = basisFor(a1):normalize()
-		local a3 = a1:cross(a2)
-		-- re-ortho-normalize a3
-		for j=1,numGridLines do
-			local angleDeclinedFromCircleAxis = j/numGridLines*circleAngle
-			local decl = math.cos(angleDeclinedFromCircleAxis)
-			local phi_r = math.sin(angleDeclinedFromCircleAxis)
-
-			local indexStart = #vertexes / 2
-			for i=1,numCircleDivs do
-				local th = (i-.5)/numCircleDivs*2*math.pi
-				local v = a1 * decl + a2 * phi_r * math.cos(th) + a3 * phi_r * math.sin(th)
-				local x, y, z = v:unpack()
-				--local phi, lambda = cartesianToLatLonWGS84(x,y,z)
-				local phi, lambda = cartesianToLatLonWGS84(z,x,y)	-- hmm ...
-				vertexes:insert(((math.deg(lambda) + 180) / 360) % 1)
-				vertexes:insert(((math.deg(phi) + 90) / 180) % 1)
-				local cosAngle = v:dot(circle.centerPos)
-				--local angle = math.acos(cosAngle)
-				--local alpha = angle < circle.centerAngle and 1 or 0
-				--local alpha = math.clamp(1 - angle / circle.centerAngle, 0, 1)^10
-				local alpha = math.clamp(cosAngle / math.cos(circle.centerAngle), 0, 1)
-				colors:insert(circle.color.x)
-				colors:insert(circle.color.y)
-				colors:insert(circle.color.z)
-				colors:insert(alpha)
-			end
-			local indexEnd = #vertexes / 2
-
-			geometries:insert{
-				mode = gl.GL_LINE_LOOP,
-				offset = indexStart,
-				count = indexEnd - indexStart,
-			}
-		end
-		--]=]
-	end
---DEBUG:print('making circlesObj', #vertexes, #colors)
-	self.circlesObj = GLSceneObject{
-		program = self.circlesShader,
-		vertexes = {
-			data = vertexes,
-			dim = 2,
-		},
-		attrs = {
-			color = {
-				buffer = {
-					data = colors,
-					dim = 4,
-				},
-			},
-		},
-		geometries = geometries,
-	}
 end
---]=======] END COPY FROM EARTH TRANSPORT NETWORK
-
 
 
 App.update = |:| do
@@ -728,7 +670,7 @@ App.update = |:| do
 	end
 
 	if vars.drawEarthquakes then
-		-- [=====[ BEGIN BEARTHQUAKES
+		gl.glDepthFunc(gl.GL_LEQUAL)
 		local sceneObj = self.earthquakeLatLonPointObj
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
@@ -746,27 +688,32 @@ App.update = |:| do
 
 		sceneObj.geometry.offset = nil
 		sceneObj.geometry.count = nil
-		--]=====] END EARTHQUAKES
+		gl.glDepthFunc(gl.GL_LESS)
 	end
 
 	if vars.drawGreatArcs then
-		-- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
 		local sceneObj = self.circlesObj
-		for _,name in ipairs(weightFields) do
-			sceneObj.uniforms[name] = vars[name]
-		end
-		sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
-		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
-		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-		sceneObj.uniforms.alpha = vars.greatArcAlpha
 gl.glLineWidth(vars.lineWidth)
 gl.glEnable(gl.GL_BLEND)
 gl.glDepthMask(0)
-		sceneObj:draw()
+		for _,c in ipairs(circles) do
+			for _,name in ipairs(weightFields) do
+				sceneObj.uniforms[name] = vars[name]
+			end
+			sceneObj.uniforms.latlon0 = {vars.lon0, vars.lat0}
+			sceneObj.uniforms.color = {c.color:unpack()}
+			sceneObj.uniforms.axis2 = {c.axis2:unpack()}
+			sceneObj.uniforms.axis3 = {c.axis3:unpack()}
+			sceneObj.uniforms.influence = c.influence
+			sceneObj.uniforms.centerPos = {c.centerPos.x, c.centerPos.y, c.centerPos.z, c.centerAngle}
+			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+			sceneObj.uniforms.alpha = vars.greatArcAlpha
+			sceneObj:draw()
+		end
 gl.glDepthMask(1)
 gl.glDisable(gl.GL_BLEND)
 gl.glLineWidth(1)
-		--]=====] END COPY FROM EARTH TRANSPORT NETWORK
 	end
 
 	--[=[ TODO

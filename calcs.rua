@@ -84,7 +84,8 @@ end
 
 local earthquakes = table()
 local checkTime = os.time()
-for t=checkTime-31*dayInSec,checkTime-dayInSec,dayInSec do
+local prevDays = 31
+for t=checkTime - prevDays * dayInSec, checkTime - dayInSec, dayInSec do
 	local deq = getDayCache(t)
 	earthquakes:append(deq)
 end
@@ -97,6 +98,13 @@ print('total', #earthquakes)
 --]=======]
 
 
+
+local WGS84 = require 'charts'.charts.WGS84
+local latLonToXYZ = |eq| do
+	return vec3d(
+		WGS84:chart(eq.latitude, eq.longitude, 0)
+	) / WGS84.a
+end
 
 -- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
 local basisFor = |v| do
@@ -128,22 +136,17 @@ end
 -- TODO also in earth-magnetic-field/run.lua
 -- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
 -- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
---local wgs84 = charts.WGS84 -- TODO organize this
-local wgs84 = {
-	a = 6378137,
-	b = 6356752.3142,	-- m ... earth polar radius
-}
 local cartesianToLatLonWGS84 = |x, y, z| do
-	x = x * wgs84.a
-	y = y * wgs84.a
-	z = z * wgs84.a
+	x = x * WGS84.a
+	y = y * WGS84.a
+	z = z * WGS84.a
 
-	local modified_b = z < 0 and -wgs84.b or wgs84.b
+	local modified_b = z < 0 and -WGS84.b or WGS84.b
 
 	local r = math.sqrt(x*x + y*y)
 
-	local e = ( modified_b*z - (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
-	local f = ( modified_b*z + (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local e = ( modified_b*z - (WGS84.a*WGS84.a - modified_b*modified_b) ) / ( WGS84.a*r )
+	local f = ( modified_b*z + (WGS84.a*WGS84.a - modified_b*modified_b) ) / ( WGS84.a*r )
 	local p = (4 / 3) * (e*f + 1)
 	local q = 2 * (e*e - f*f)
 	local d = p*p*p + q*q
@@ -164,10 +167,10 @@ local cartesianToLatLonWGS84 = |x, y, z| do
 	local g = (math.sqrt( e*e + v ) + e) / 2
 	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
 
-	local rlat = math.atan( (wgs84.a*(1 - t*t)) / (2*modified_b*t) )
+	local rlat = math.atan( (WGS84.a*(1 - t*t)) / (2*modified_b*t) )
 	local phi = rlat
 
-	local height = (r - wgs84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
+	local height = (r - WGS84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
 	local zlong = math.atan2(y, x)
 	if  zlong < 0 then
 		zlong = zlong + 2*math.pi
@@ -183,35 +186,13 @@ end
 
 
 
--- [===[ BEGIN COPY FROM run.rua
-local rotateX = |v, theta| do
-	local c, s = math.cos(theta), math.sin(theta)
-	return vec3d(
-		v.x,
-		v.y * c - v.z * s,
-		v.y * s + v.z * c)
-end
-local rotateY = |v, theta| do
-	local c, s = math.cos(theta), math.sin(theta)
-	return vec3d(
-		v.x * c + v.z * s,
-		v.y,
-		v.x * s - v.z * c)
-end
-local latLonToXYZ = |eq| do
-	local v = vec3d(0, 0, 1)   -- z+ is default
-	v = rotateX(v, -math.rad(eq.latitude))
-	v = rotateY(v, math.pi - math.rad(eq.longitude))
-	return v
-end
---]===] -- END COPY FROM run.rua
-
 for _,eq in ipairs(earthquakes) do
 	-- add preprocessed fields	
 	local Y,m,d,H,M,S = eq.time:match'^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d%.%d%d%dZ)$'
 	assert(Y)	-- ... and the others should be there too
 	eq.ostime = os.time{year=Y, month=m, day=d, hour=H, min=M, sec=S}
 	eq.xyz = latLonToXYZ(eq)
+print(eq.latitude, eq.longitude, eq.xyz)
 end
 earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
 
@@ -279,44 +260,22 @@ for i,eq in ipairs(earthquakes) do
 			local influence = axisLen * 10^eq.mag * 10^eq2.mag
 			local angle = math.acos(v:dot(v2))
 			if greatArcAngleMin < angle and angle < greatArcAngleMax then	-- if I weight by cross then that'll make the 0' and 180' angles diminish ... nah, there's still a lot of noise unless I turn down the alpha ... then it's hard to highlight any geodesics ...
+				local a1 = axis
+				local a2 = basisFor(a1):normalize()
+				local a3 = a1:cross(a2)			
 				local circle = {
 					axis = axis,
+					axis2 = a2,
+					axis3 = a3,
 					angle = math.pi * .5,
 					indexes = {i, j},
 					-- [[ used for rendering
-					color = vec3d(1, .3, .07) * influence,
+					influence = influence,
+					color = vec3d(1, .3, .07),
 					centerPos = (v + v2):normalize(),	-- midpoint between two earthquake lines
 					centerAngle = .5 * angle,			-- half the angle between them
 					--]]
 				}
-				-- while we're here, construct our circle as well
-				-- or if I keep using geometry shaders maybe I should do it all in there?
-				circle.vertexes = table()
-				circle.colors = table()
-				local numCircleDivs = 100
-				local a1 = circle.axis
-				local a2 = basisFor(a1):normalize()
-				local a3 = a1:cross(a2)			
-				local decl = math.cos(circle.angle)
-				local phi_r = math.sin(circle.angle)
-				for k=1,numCircleDivs do
-					local th = (k-.5)/numCircleDivs*2*math.pi
-					local v = a1 * decl + a2 * phi_r * math.cos(th) + a3 * phi_r * math.sin(th)
-					local x, y, z = v:unpack()
-					--local phi, lambda = cartesianToLatLonWGS84(x,y,z)
-					local phi, lambda = cartesianToLatLonWGS84(z,x,y)	-- hmm ...
-					circle.vertexes:insert(((math.deg(lambda) + 180) / 360) % 1)
-					circle.vertexes:insert(((math.deg(phi) + 90) / 180) % 1)
-					local cosAngle = v:dot(circle.centerPos)
-					--local angle = math.acos(cosAngle)
-					--local alpha = angle < circle.centerAngle and 1 or 0
-					--local alpha = math.clamp(1 - angle / circle.centerAngle, 0, 1)^10
-					local alpha = math.clamp(cosAngle / math.cos(circle.centerAngle), 0, 1)
-					circle.colors:insert(circle.color.x)
-					circle.colors:insert(circle.color.y)
-					circle.colors:insert(circle.color.z)
-					circle.colors:insert(alpha)
-				end
 
 				allCircles:insert(circle)
 				activeCircles:insert(#allCircles)
