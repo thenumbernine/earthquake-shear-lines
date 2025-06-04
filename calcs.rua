@@ -7,9 +7,41 @@ what to track ...
 - as we get too old, throw out old points and their respective great-arcs 
 --]]
 
+local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
 
 local dayInSec = 60 * 60 * 24
+
+
+-- when searching for great-arc circles, ignore point-pairs that are not within this angle distance apart
+--local greatArcAngleMin, greatArcAngleMax = math.rad(10), math.rad(90)
+--local greatArcAngleMin, greatArcAngleMax = math.rad(0), math.rad(180)
+local greatArcAngleMin, greatArcAngleMax = math.rad(10), math.rad(170)
+
+-- tolerance of how close a quake must be to a previous circle to consider along the geodesic
+local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(1)	-- in radians
+--local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(5)	-- in radians
+--local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(15)	-- in radians
+
+-- if we get two great-arcs touching our current quake (within `quakeAlignWithPreviousGeodesicAngleThreshold`)
+--  then throw out the new one if their axii (+-) is within this angle apart.
+-- ... but I think we do want duplicate-arcs to show where multiple-quakes-on-same-arc do align.
+-- ... we just don't want duplicate-points, being used to generate those arcs... right?
+--local filterDuplicateTouchingArcsAngleThreshold = math.rad(5)
+
+-- when searching for great-arc circles, ignore points within this many radians of previously-considered points
+--local filterDuplicatePointsAngleThreshold = math.rad(1)
+--local filterDuplicatePointsAngleThreshold = math.rad(5)
+local filterDuplicatePointsAngleThreshold = math.rad(10)
+
+-- how far back we want to look when comparing great-arcs 
+--local considerationTimeWindowSize = dayInSec	-- in seconds
+local considerationTimeWindowSize = 3 * dayInSec	-- in seconds
+
+
+
+
+
 -- [=======[ download data
 path'cache':mkdir()
 local getDayCache = |t, force| do
@@ -64,6 +96,93 @@ end
 print('total', #earthquakes)
 --]=======]
 
+
+
+-- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
+local basisFor = |v| do
+	local x = v:cross(vec3d(1, 0, 0))
+	local y = v:cross(vec3d(0, 1, 0))
+	local z = v:cross(vec3d(0, 0, 1))
+	local xl = x:lenSq()
+	local yl = y:lenSq()
+	local zl = z:lenSq()
+	-- TODO there's too many situations where ternary needs ()'s to save parsing... I should just change its symbols
+	return xl > yl	-- x > y
+		and (
+			xl > zl
+			and x	-- x > y, x > z
+			or z		-- z > x > y
+		)
+		or (		-- y >= x
+			yl > zl
+			and y	-- y > z, y >= x
+			or z	-- z > y >= x
+		)
+end
+
+
+-- ported from WMM2020 GeomagnetismLibrary.c
+-- expects xyz in cartesian units earth-semimajor-axis
+-- output is in (radians, radians, km)
+--
+-- TODO also in earth-magnetic-field/run.lua
+-- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
+-- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
+--local wgs84 = charts.WGS84 -- TODO organize this
+local wgs84 = {
+	a = 6378137,
+	b = 6356752.3142,	-- m ... earth polar radius
+}
+local cartesianToLatLonWGS84 = |x, y, z| do
+	x = x * wgs84.a
+	y = y * wgs84.a
+	z = z * wgs84.a
+
+	local modified_b = z < 0 and -wgs84.b or wgs84.b
+
+	local r = math.sqrt(x*x + y*y)
+
+	local e = ( modified_b*z - (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local f = ( modified_b*z + (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local p = (4 / 3) * (e*f + 1)
+	local q = 2 * (e*e - f*f)
+	local d = p*p*p + q*q
+
+	local v
+	if  d >= 0 then
+		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
+			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
+	else
+		v= 2 * math.sqrt( -p )
+			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
+	end
+
+	if v*v < math.abs(p)  then
+		v = -(v*v*v + 2*q) / (3*p)
+	end
+
+	local g = (math.sqrt( e*e + v ) + e) / 2
+	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
+
+	local rlat = math.atan( (wgs84.a*(1 - t*t)) / (2*modified_b*t) )
+	local phi = rlat
+
+	local height = (r - wgs84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
+	local zlong = math.atan2(y, x)
+	if  zlong < 0 then
+		zlong = zlong + 2*math.pi
+	end
+	local lambda = zlong
+	while lambda > math.pi do
+		lambda = lambda - 2 * math.pi
+	end
+	return phi, lambda, height * 1e+3		-- km back to m
+end
+--]=======] END COPY FROM EARTH TRANSPORT NETWORK
+
+
+
+
 -- [===[ BEGIN COPY FROM run.rua
 local rotateX = |v, theta| do
 	local c, s = math.cos(theta), math.sin(theta)
@@ -96,16 +215,6 @@ for _,eq in ipairs(earthquakes) do
 end
 earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
 
-
--- tolerance of how close a quake must be to a previous circle to consider along the geodesic
---local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(1)	-- in radians
-local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(5)	-- in radians
---local quakeAlignWithPreviousGeodesicAngleThreshold = math.rad(15)	-- in radians
-
--- how far back we want to look when comparing great-arcs 
-local considerationTimeWindowSize = dayInSec	-- in seconds
---local considerationTimeWindowSize = 3 * dayInSec	-- in seconds
-
 local activeCircles = table()	-- holds indexes into 'allCircles'
 local allCircles = table()
 local oldestEarthquakeIndex = 1
@@ -114,15 +223,30 @@ for i,eq in ipairs(earthquakes) do
 	
 	-- see how close it is to all other circles on file
 	local touchingCircles = table()
-	for _,ci in ipairs(activeCircles) do
+	for ici,ci in ipairs(activeCircles) do
 		local c = allCircles[ci]
 		local angle = math.acos(c.axis:dot(v))
 		-- if we were right on the plane then we would be right at 90' with the axis.
 		-- see how far the angle we make with the axis is from 90'
 		if math.abs(angle - .5 * math.pi) < quakeAlignWithPreviousGeodesicAngleThreshold then
-			-- TODO take note (or even filter?) based on the angle distance between us and the prevoius points that it took to form this geodesic?
-			-- what if all new quakes happen to be along geodesics but >90' of old geodesic points? (or whatever our geodesic creation angle criteria is)
-			touchingCircles:insert{circle=ci, angle=angle}
+			
+			-- if a previous great-arc was already associated with this point and it is close enough to the current great-arc then skip the current one (uniques only)
+			local dups
+			if filterDuplicateTouchingArcsAngleThreshold then
+				local costh = math.cos(filterDuplicateTouchingArcsAngleThreshold)
+				for ici2=1,ici-1 do
+					local c2 = allCircles[activeCircles[ici2]]
+					if math.abs(c.axis:dot(c2.axis)) > costh then
+						dups = true
+						break
+					end
+				end
+			end
+			if not dups then
+				-- TODO take note (or even filter?) based on the angle distance between us and the prevoius points that it took to form this geodesic?
+				-- what if all new quakes happen to be along geodesics but >90' of old geodesic points? (or whatever our geodesic creation angle criteria is)
+				touchingCircles:insert{circle=ci, angle=angle}
+			end
 		end
 	end
 	local numCirclesChecked = #activeCircles
@@ -130,26 +254,73 @@ for i,eq in ipairs(earthquakes) do
 	-- now do our typical building of great-arcs based on our other angle criteria
 	local oldCircleCount = #activeCircles
 	for j=oldestEarthquakeIndex,i do
+		-- TODO filter out repetitive points
+
 		local eq2 = earthquakes[j]
-		local v2 = eq2.xyz
-		local torque = v:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
-		local axisLen = torque:length()
-		local axis = torque * (1 / (math.max(axisLen, 1e-15)))	
-		local influence = axisLen * 10^eq.mag * 10^eq2.mag
-		local angle = math.acos(v:dot(v2))
-		if math.rad(10) < angle and angle < math.rad(90) then	-- if I weight by cross then that'll make the 0' and 180' angles diminish ... nah, there's still a lot of noise unless I turn down the alpha ... then it's hard to highlight any geodesics ...
-			local circle = {
-				axis = axis,
-				angle = math.pi * .5,
-				indexes = {i, j},
-				-- [[ used for rendering
-				color = vec3d(1, .3, .07) * influence,
-				centerPos = (v + v2):normalize(),	-- midpoint between two earthquake lines
-				centerAngle = .5 * angle,			-- half the angle between them
-				--]]
-			}
-			allCircles:insert(circle)
-			activeCircles:insert(#allCircles)
+		local v2 = eq2.xyz	-- spherical
+		
+		local dups 
+		-- filter out duplicate points for great-arc construction consideration ...
+		if filterDuplicatePointsAngleThreshold then
+			local cosAngle = math.cos(filterDuplicatePointsAngleThreshold)
+			for k=oldestEarthquakeIndex,j-1 do
+				local v3 = earthquakes[k].xyz	 -- spherical
+				-- secant length to angle ...
+				if v3:dot(v2) >= cosAngle then
+					dups = true
+					break
+				end
+			end
+		end
+		if not dups then
+			local torque = v:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
+			local axisLen = torque:length()
+			local axis = torque * (1 / (math.max(axisLen, 1e-15)))	
+			local influence = axisLen * 10^eq.mag * 10^eq2.mag
+			local angle = math.acos(v:dot(v2))
+			if greatArcAngleMin < angle and angle < greatArcAngleMax then	-- if I weight by cross then that'll make the 0' and 180' angles diminish ... nah, there's still a lot of noise unless I turn down the alpha ... then it's hard to highlight any geodesics ...
+				local circle = {
+					axis = axis,
+					angle = math.pi * .5,
+					indexes = {i, j},
+					-- [[ used for rendering
+					color = vec3d(1, .3, .07) * influence,
+					centerPos = (v + v2):normalize(),	-- midpoint between two earthquake lines
+					centerAngle = .5 * angle,			-- half the angle between them
+					--]]
+				}
+				-- while we're here, construct our circle as well
+				-- or if I keep using geometry shaders maybe I should do it all in there?
+				circle.vertexes = table()
+				circle.colors = table()
+				local numCircleDivs = 100
+				local a1 = circle.axis
+				local a2 = basisFor(a1):normalize()
+				local a3 = a1:cross(a2)			
+				local decl = math.cos(circle.angle)
+				local phi_r = math.sin(circle.angle)
+				for k=1,numCircleDivs do
+					local th = (k-.5)/numCircleDivs*2*math.pi
+					local v = a1 * decl + a2 * phi_r * math.cos(th) + a3 * phi_r * math.sin(th)
+					local x, y, z = v:unpack()
+					--local phi, lambda = cartesianToLatLonWGS84(x,y,z)
+					local phi, lambda = cartesianToLatLonWGS84(z,x,y)	-- hmm ...
+					circle.vertexes:insert(((math.deg(lambda) + 180) / 360) % 1)
+					circle.vertexes:insert(((math.deg(phi) + 90) / 180) % 1)
+					local cosAngle = v:dot(circle.centerPos)
+					--local angle = math.acos(cosAngle)
+					--local alpha = angle < circle.centerAngle and 1 or 0
+					--local alpha = math.clamp(1 - angle / circle.centerAngle, 0, 1)^10
+					local alpha = math.clamp(cosAngle / math.cos(circle.centerAngle), 0, 1)
+					circle.colors:insert(circle.color.x)
+					circle.colors:insert(circle.color.y)
+					circle.colors:insert(circle.color.z)
+					circle.colors:insert(alpha)
+				end
+
+				allCircles:insert(circle)
+				activeCircles:insert(#allCircles)
+			end
 		end
 	end
 	-- now recalculate the oldest point index t consider (basd on our time window)

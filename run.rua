@@ -52,85 +52,6 @@ for ci,c in ipairs(allCircles) do
 	end
 end
 
--- [=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
-local basisFor = |v| do
-	local x = v:cross(vec3d(1, 0, 0))
-	local y = v:cross(vec3d(0, 1, 0))
-	local z = v:cross(vec3d(0, 0, 1))
-	local xl = x:lenSq()
-	local yl = y:lenSq()
-	local zl = z:lenSq()
-	-- TODO there's too many situations where ternary needs ()'s to save parsing... I should just change its symbols
-	return xl > yl	-- x > y
-		and (
-			xl > zl
-			and x	-- x > y, x > z
-			or z		-- z > x > y
-		)
-		or (		-- y >= x
-			yl > zl
-			and y	-- y > z, y >= x
-			or z	-- z > y >= x
-		)
-end
-
-local wgs84 = charts.WGS84
-
--- ported from WMM2020 GeomagnetismLibrary.c
--- expects xyz in cartesian units earth-semimajor-axis
--- output is in (radians, radians, km)
---
--- TODO also in earth-magnetic-field/run.lua
--- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
--- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
-local cartesianToLatLonWGS84 = |x, y, z| do
-	x = x * wgs84.a
-	y = y * wgs84.a
-	z = z * wgs84.a
-
-	local modified_b = z < 0 and -wgs84.b or wgs84.b
-
-	local r = math.sqrt(x*x + y*y)
-
-	local e = ( modified_b*z - (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
-	local f = ( modified_b*z + (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
-	local p = (4 / 3) * (e*f + 1)
-	local q = 2 * (e*e - f*f)
-	local d = p*p*p + q*q
-
-	local v
-	if  d >= 0 then
-		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
-			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
-	else
-		v= 2 * math.sqrt( -p )
-			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
-	end
-
-	if v*v < math.abs(p)  then
-		v = -(v*v*v + 2*q) / (3*p)
-	end
-
-	local g = (math.sqrt( e*e + v ) + e) / 2
-	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
-
-	local rlat = math.atan( (wgs84.a*(1 - t*t)) / (2*modified_b*t) )
-	local phi = rlat
-
-	local height = (r - wgs84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
-	local zlong = math.atan2(y, x)
-	if  zlong < 0 then
-		zlong = zlong + 2*math.pi
-	end
-	local lambda = zlong
-	while lambda > math.pi do
-		lambda = lambda - 2 * math.pi
-	end
-	return phi, lambda, height * 1e+3		-- km back to m
-end
---]=======] END COPY FROM EARTH TRANSPORT NETWORK
-
-
 
 local weightFields = chartCNames:mapi(|name| 'weight_'..name)
 local vars = table(
@@ -717,16 +638,27 @@ App.refreshCircles = |:| do
 	local vertexes = table()
 	local colors = table()
 	local geometries = table()
-	for _,c in ipairs(circles) do
-		local circleAngle = c.angle
-		local a1 = c.axis
+	for _,circle in ipairs(circles) do
+		local indexStart = #vertexes / 2
+		colors:append(circle.colors)
+		vertexes:append(circle.vertexes)
+		local indexEnd = #vertexes / 2
+
+		geometries:insert{
+			mode = gl.GL_LINE_LOOP,
+			offset = indexStart,
+			count = indexEnd - indexStart,
+		}
+		--[=[
+		local circleAngle = circle.angle
+		local a1 = circle.axis
 		local a2 = basisFor(a1):normalize()
 		local a3 = a1:cross(a2)
 		-- re-ortho-normalize a3
 		for j=1,numGridLines do
-			local phi = j/numGridLines*circleAngle
-			local decl = math.cos(phi)
-			local phi_r = math.sin(phi)
+			local angleDeclinedFromCircleAxis = j/numGridLines*circleAngle
+			local decl = math.cos(angleDeclinedFromCircleAxis)
+			local phi_r = math.sin(angleDeclinedFromCircleAxis)
 
 			local indexStart = #vertexes / 2
 			for i=1,numCircleDivs do
@@ -737,14 +669,14 @@ App.refreshCircles = |:| do
 				local phi, lambda = cartesianToLatLonWGS84(z,x,y)	-- hmm ...
 				vertexes:insert(((math.deg(lambda) + 180) / 360) % 1)
 				vertexes:insert(((math.deg(phi) + 90) / 180) % 1)
-				local cosAngle = v:dot(c.centerPos)
+				local cosAngle = v:dot(circle.centerPos)
 				--local angle = math.acos(cosAngle)
-				--local alpha = angle < c.centerAngle and 1 or 0
-				--local alpha = math.clamp(1 - angle / c.centerAngle, 0, 1)^10
-				local alpha = math.clamp(cosAngle / math.cos(c.centerAngle), 0, 1)
-				colors:insert(c.color.x)
-				colors:insert(c.color.y)
-				colors:insert(c.color.z)
+				--local alpha = angle < circle.centerAngle and 1 or 0
+				--local alpha = math.clamp(1 - angle / circle.centerAngle, 0, 1)^10
+				local alpha = math.clamp(cosAngle / math.cos(circle.centerAngle), 0, 1)
+				colors:insert(circle.color.x)
+				colors:insert(circle.color.y)
+				colors:insert(circle.color.z)
 				colors:insert(alpha)
 			end
 			local indexEnd = #vertexes / 2
@@ -755,6 +687,7 @@ App.refreshCircles = |:| do
 				count = indexEnd - indexStart,
 			}
 		end
+		--]=]
 	end
 --DEBUG:print('making circlesObj', #vertexes, #colors)
 	self.circlesObj = GLSceneObject{
