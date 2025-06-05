@@ -10,6 +10,10 @@ local GLTex2D = require 'gl.tex2d'
 local ig = require 'imgui'
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
+local vector = require 'ffi.cpp.vector-lua'
+
+local CLEnv = require 'cl.obj.env'
+local clnumber = require 'cl.obj.number'
 
 local basisFor = require 'basis'.basisFor
 local rotateX = require 'basis'.rotateX
@@ -18,6 +22,7 @@ local rotateZ = require 'basis'.rotateZ
 
 local dayInSec = 60 * 60 * 24
 
+local charts = require 'charts'.charts
 local chartCode = require 'charts'.chartCode
 local chartCNames = require 'charts'.chartCNames
 
@@ -163,7 +168,7 @@ vec2 applyLatLonRoll0Inv(vec2 latlon) {
 
 ]]
 
-local planetClasses = table.filter(Planets.planetClasses, |c| c.name ~= 'earth')
+local planetClasses = table.filter(Planets.planetClasses, |c| c.name ~= 'earth' and c.name ~= 'EM_Bary')
 -- should I do some geometry-index stuff too or nah?
 local drawPlanetAngles = table{
 	1, 5, 15, 30, 45, 60, 90, 120, 135, 150, 175, 179
@@ -210,12 +215,20 @@ so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offse
 	}
 ):setmetatable(nil)
 
-local oldestEarthquakeIndex
+local earthquakeWindowStartIndex
+local earthquakeWindowEndIndex
 local recalculateOldestEarthquakeIndex = ||do
-	oldestEarthquakeIndex = vars!.earthquakeIndex
+	earthquakeWindowStartIndex = vars!.earthquakeIndex
+	local windowStartTime = earthquakes[vars.earthquakeIndex].ostime - calcCircles.timeWindowInDays * dayInSec
 	for i=vars.earthquakeIndex,1,-1 do
-		if earthquakes[vars.earthquakeIndex].ostime - earthquakes[i].ostime > calcCircles.timeWindowInDays * dayInSec then break end
-		oldestEarthquakeIndex = i
+		if earthquakes[i].ostime < windowStartTime then break end
+		earthquakeWindowStartIndex = i
+	end
+	earthquakeWindowEndIndex = vars!.earthquakeIndex
+	local windowEndTime = earthquakes[vars.earthquakeIndex].ostime + calcCircles.timeWindowInDays * dayInSec
+	for i=vars.earthquakeIndex,#earthquakes do
+		if earthquakes[i].ostime > windowEndTime then break end
+		earthquakeWindowEndIndex = i
 	end
 end
 
@@ -463,7 +476,7 @@ void main() {
 	vec3 coords = vec3(
 		mod(vtxofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
 		mod(vtxofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
-		1e+3);					// height in meters
+		1e+3 * (1. + hilite));				// height in meters
 
 	vec3 pos = 0.
 <? for _,name in ipairs(chartCNames) do
@@ -584,7 +597,7 @@ uniform vec3 latlonroll0;	// used for texturing, TODO FIXME proper 3d transform
 
 void main() {
 	float theta = vertex * 2. * M_PI;
-	
+
 	float decl = cos(declinationFromAxis);
 	float phi_r = sin(declinationFromAxis);
 
@@ -780,10 +793,238 @@ void main() {
 	circles = allCircles
 	--]=]
 
+
+
+if COMPUTE_TIDES then
 	-- while we're here, let's compute the tidal and gravitational forces of our planets ...
 	-- TODO take it from my solarsystem project where I'm already doing this
 	-- but compute shader? does GL support double buffers? I don't think so . . .
 	-- maybe I have to use OpenCL now
+
+	self.clsize = {200,100}
+	self.env = CLEnv{
+		verbose = true,
+		useGLSharing = false,
+		precision = 'double',
+		-- TODO how about a getter-for-cmdline-obj ?
+		--getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
+		--getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
+		--deviceType = CLEnv.getDeviceTypeFromCmdLine(...),
+		size = size,
+	}
+
+	self.calcTideAndGravProgram = self.env:program{
+		code = template([[
+real rad(real d) {
+	return d * M_PI / 180.;
+}
+
+constant const real WGS84_a = 6378137.;		// m
+constant const real WGS84_b = 6356752.3142;	// m @ polar radius
+constant const real WGS84_esq = 1. - WGS84_b * WGS84_b / (WGS84_a * WGS84_a);
+constant const real WGS84_e = <?=clnumber(WGS84_e)?>;//sqrt(WGS84_esq); ... but no constexpr in CL .c ... have to upgrade to clcpp but then you need to rope in spirv compiler ... too much drama ...
+constant const real WGS84_flattening = 1. - WGS84_b / WGS84_a;
+constant const real WGS84_inverseFlattening = 298.257223563;
+constant const real WGS84_eccentricitySquared = (2. * WGS84_inverseFlattening - 1.) / (WGS84_inverseFlattening * WGS84_inverseFlattening);
+constant const real gravitationalConstant = 6.6738480e-11;	// m^3 / (kg s^2)
+
+real WGS84_calc_N(real sinTheta) {
+	real denom = sqrt(1. - WGS84_eccentricitySquared * sinTheta * sinTheta);
+	return WGS84_a / denom;
+}
+
+real2 perp2(real2 a) {
+	return (real2)(-a.y, a.x);
+}
+
+real4 xformZBackToZUp(real4 pt) {
+	//convert from z-towards-user (3D) to z-up (2D)
+	pt.yz = -perp2(pt.yz);		//rotate back so pt is up
+	pt.xz = perp2(pt.xz);		//now rotate so prime meridian is along -z instead of +x
+	return pt;
+}
+
+// how many copies of this do I need?
+// This is the CL version to go with the GLSL version...
+// I think I can gsub one to the other ...
+real4 chart_WGS84(real4 latLonHeight) {
+	real lat = latLonHeight.x;
+	real lon = latLonHeight.y;
+	real height = latLonHeight.z;
+
+	real phi = rad(lon);		// spherical φ
+	real theta = rad(lat);		// spherical inclination angle (not azumuthal θ)
+	real cosTheta = cos(theta);
+	real sinTheta = sin(theta);
+
+	real N = WGS84_calc_N(sinTheta);
+
+	real NPlusH = N + height;
+	real4 y = (real4)(
+		NPlusH * cosTheta * cos(phi),
+		NPlusH * cosTheta * sin(phi),
+		(N * (1. - WGS84_eccentricitySquared) + height) * sinTheta,
+		0.
+	);
+	// at this point we're in meters
+	// now rotate back
+	y = xformZBackToZUp(y);
+	return y;
+}
+
+//returns magnitude g+m-2d
+real4 calcGravityAccel(
+	real4 posOnEarth, 			//relative to earth, in meters
+	real4 planetPosRelEarth 	//relative to earth, in meters, w = mass in kg
+) {
+	real4 const x = (real4)((posOnEarth - planetPosRelEarth).xyz, 0.);
+	real const r = length(x);
+	real const planetMass = planetPosRelEarth.w;
+	return x * (-planetMass * gravitationalConstant / (r * r * r));
+}
+
+//returns magnitude g+m-2d
+real4 calcTidalAccel(
+	real4 posOnEarth,	//m
+	real4 normal,
+	real4 planetPosRelEarth
+) {
+	real4 const x = (real4)((posOnEarth - planetPosRelEarth).xyz, 0.);
+	real const r = length(x);
+	real const r2 = r * r;
+	real const r3 = r * r2;
+	real const xDotN = dot(x, normal);
+	real const planetMass = planetPosRelEarth.w;
+	return (x * (3. * xDotN / r2) - normal) * (gravitationalConstant * planetMass / r3);
+}
+
+kernel void calcTideAndGrav(
+	global real * out,		// output[i] = force component specified
+	global real4 * const planetPosRelEarth,	// input positions[9] = (pos - earth.pos) x y z and mass = w
+	int component,
+	int numPlanets
+) {
+	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
+	// index, x = longitude = east/west, y = latitude = north/south
+
+	// lat lon, x = latitude = north/south, longitude = left/right
+	real2 latlon = (real2)(
+		(real)((i.y + .5) / <?=clnumber(clsize[2])?>) * 180. - 90.,
+		(real)((i.x + .5) / <?=clnumber(clsize[1])?>) * 360. - 180.
+	);
+
+	real4 posOnEarth = chart_WGS84((real4)(latlon, 0., 0.));
+	real4 normal = normalize(posOnEarth);
+	real4 accel = (real4)(0., 0., 0., 0.);
+
+	for (int j = 0; j < <?=#Planets.planetClasses?>; ++j) {
+		real4 tideAccel;
+		if (component & 3) {
+			tideAccel = calcTidalAccel(posOnEarth, normal, planetPosRelEarth);
+		} else {
+			tideAccel = (real4)(0., 0., 0., 0.);
+		}
+		real4 gravAccel = (real4)(0., 0., 0., 0.);
+		if (component & 0xc) {
+			gravAccel = calcGravityAccel(posOnEarth, normal, planetPosRelEarth);
+		} else {
+			gravAccel = (real4)(0., 0., 0., 0.);
+		}
+
+		real4 tideNormal = normal * dot(tideAccel, normal);
+		real4 tideTangent = tideAccel - tideNormal;
+		real4 gravNormal = normal * dot(gravAccel, normal);
+		real4 gravTangent = gravAccel - gravNormal;
+
+		if (component & 1) accel += tideNormal;
+		if (component & 2) accel += tideTangent;
+		if (component & 4) accel += gravNormal;
+		if (component & 8) accel += gravTangent;
+	}
+
+	out[index] = length(accel);
+}
+
+kernel void rescale(
+	global float * outv,
+	global real * const inv,
+	real minv,
+	real maxv
+) {
+	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
+	outv[index] = (float)((inv[index] - minv) / (maxv - minv));
+}
+
+]],		{
+			clsize = self.clsize,
+			clnumber = clnumber,
+			WGS84_e = math.sqrt(1. - charts.WGS84.b^2 / charts.WGS84.a^2),
+			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
+		}),
+	}
+	self.clvolume = self.clsize[1] * self.clsize[2]
+
+	self.calcTideAndGravProgram:compile()
+
+	self.forceBuffer = env:buffer{name='forceBuffer', type='real'}
+
+	self.rescaleForceCPUBuf = vector('float', self.clvolume)
+	self.rescaleForceBuffer = env:buffer{name='forceBuffer', type='float'}
+
+	self.reduceBuffer = env:buffer{name='reduceBuffer', type='real'}
+	self.reduceSwapBuffer = env:buffer{name='reduceSwapBuffer', type='real'}
+	self.reduceResultPtr = ffi.new'real[1]'
+	self.reduceResultPtr[0] = 0
+
+	self.planetPosRelEarthCPUBuf = vector('cl_real4', #Planets.planetClasses)
+	self.planetPosRelEarthBuffer = env:buffer{
+		name = 'planetPosRelEarthBuffer',
+		type = 'real4',
+		size = {#Planets.planetClasses},
+	}	-- all planets, including earth, because maybe we want it too.
+
+	self.calcTideAndGravKernel = self.calcTideAndGravProgram:kernel(
+		'calcTideAndGrav',
+		self.forceBuffer,
+		self.planetPosRelEarthBuffer
+	)
+
+	-- TODO instead of this, use GL sharing?
+	self.rescaleKernel = self.calcTideAndGravProgram:kernel(
+		'rescale',
+		self.rescaleForceBuffer,
+		self.forceBuffer
+	)
+
+	self.reduceMin = self.app.env:reduce{
+		count = self.clvolume,
+		op = |x,y| 'min('..x..', '..y..')',
+		initValue = 'INFINITY',
+		buffer = self.reduceBuffer,
+		swapBuffer = self.reduceSwapBuffer,
+		result = self.reduceResultPtr,
+	}
+
+	self.reduceMax = self.app.env:reduce{
+		count = self.clvolume,
+		op = |x,y| 'max('..x..', '..y..')',
+		initValue = '-INFINITY',
+		buffer = self.reduceBuffer,
+		swapBuffer = self.reduceSwapBuffer,
+		result = self.reduceResultPtr,
+	}
+
+	local internalFormat = gl.GL_R32F
+	local info = require 'gl.tex'.formatInfoForInternalFormat[internalFormat]
+	self.forceTex = GLTex2D{
+		width = self.clsize[1],
+		height = self.clsize[2],
+		internalFormat = info.internalFormat,
+		format = info.format,
+		type = info.types[1],
+		data = self.rescaleForceCPUBuf.v,
+	}:unbind()
+end -- COMPUTE_TIDES
 
 	recalculateOldestEarthquakeIndex()
 	self:recalcAllCircles()
@@ -803,7 +1044,7 @@ App.refreshRelevantCircles = |:| do
 		-- TODO also include future window ... but also TODO should we show future earthquakes too?
 		-- TODO earthquake window slider relative to the previous quake?
 		local circleIndexes = table()
-		for i=oldestEarthquakeIndex,vars.earthquakeIndex do
+		for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
 			for _,ci in ipairs(circlesMadeByQuakes[i]) do
 				circleIndexes[ci] = true
 			end
@@ -831,7 +1072,7 @@ App.update = |:| do
 
 	do
 		local eq = earthquakes[vars.earthquakeIndex]
-		
+
 		gl.glLineWidth(vars.lineWidth)
 		--gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
 		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -842,7 +1083,7 @@ App.update = |:| do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
-		sceneObj.uniforms.declinationFromAxis = .5 * math.pi 
+		sceneObj.uniforms.declinationFromAxis = .5 * math.pi
 		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.angleFade = vars.angleFade
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
@@ -852,11 +1093,12 @@ App.update = |:| do
 			for _,c in ipairs(circles) do
 				local t1 = earthquakes[c.indexes[1]].ostime
 				local t2 = earthquakes[c.indexes[2]].ostime
-				local tavg = .5 * (t1 + t2)
+				local tavg = (t1 + t2) >> 1
 				if tavg < eq.ostime then
-					sceneObj.uniforms.color = {c.color.x, .1 * c.color.y, .1 * c.color.z}
+					--sceneObj.uniforms.color = {c.color.x, .1 * c.color.y, .1 * c.color.z}
+					sceneObj.uniforms.color = {c.color.x, 0, 0}
 				else
-					sceneObj.uniforms.color = {.1 * c.color.x, c.color.y, .1 * c.color.z}
+					sceneObj.uniforms.color = {0, c.color.y, 0}
 				end
 				sceneObj.uniforms.axis = {c.axis:unpack()}
 				sceneObj.uniforms.axis2 = {c.axis2:unpack()}
@@ -872,9 +1114,9 @@ App.update = |:| do
 			sceneObj.uniforms.angleFade = 1
 			local earthPos = planets[Planets.indexes.earth].pos
 			local tiltToEarth = |v| do
-				v = rotateZ(v, 
+				v = rotateZ(v,
 					math.rad(vars.julianBaseAngle)
-					+ ((selQuakeJulianDate % 1) + .5) * -2 * math.pi * (   
+					+ ((selQuakeJulianDate % 1) + .5) * -2 * math.pi * (
 						-- convert from sinodic day (24 hours = 360 degrees x ())
 						-- ... to sidereal day
 						1 / (1 - 1 / 365.25)
@@ -891,7 +1133,7 @@ App.update = |:| do
 							planetDir = tiltToEarth(planetDir)	-- rotate by earth tilt and time of day
 							local axis2 = basisFor(planetDir)
 							local axis3 = planetDir:cross(axis2)
-							sceneObj.uniforms.declinationFromAxis = math.rad(declAngle) 
+							sceneObj.uniforms.declinationFromAxis = math.rad(declAngle)
 							sceneObj.uniforms.color = planetClass.color
 							sceneObj.uniforms.axis = {planetDir:unpack()}
 							sceneObj.uniforms.axis2 = {axis2:unpack()}
@@ -921,8 +1163,8 @@ App.update = |:| do
 		sceneObj.uniforms.hiliteIndex = vars.earthquakeIndex - 1
 
 		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
-		sceneObj.geometry.offset = 6 * (oldestEarthquakeIndex - 1)
-		sceneObj.geometry.count = 6 * (vars.earthquakeIndex - oldestEarthquakeIndex + 1)
+		sceneObj.geometry.offset = 6 * (earthquakeWindowStartIndex - 1)
+		sceneObj.geometry.count = 6 * (earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1)
 
 		sceneObj:draw()
 
@@ -930,8 +1172,6 @@ App.update = |:| do
 		sceneObj.geometry.count = nil
 		gl.glDepthFunc(gl.GL_LESS)
 	end
-
-
 
 	--[=[ TODO show torque axii
 	if vars.drawAxisTorques then
@@ -975,6 +1215,37 @@ App.updateEarthquakeIndex = |:| do
 	-- TODO redo circle' touchingindexes to scan both + and - in time by 1 day
 	recalculateOldestEarthquakeIndex()
 	self:refreshRelevantCircles()	-- TODO don't recalc all circles, just recalc indexes used
+
+
+	self:refreshForceBuffer()
+end
+
+App.refreshForceBuffer = |:|do
+if COMPUTE_TIDES then
+	local earthPos = planets[Planets.indexes.earth].pos
+	for i,p in ipairs(Planets.planetClasses) do
+		local v = planets[i].pos - earthPos
+		local dst = self.planetPosRelEarthCPUBuf.v + (i-1)
+		dst.x = v.x
+		dst.y = v.y
+		dst.z = v.z
+		dst.w = planets[i].mass
+	end
+	self.planetPosRelEarthBuffer:setData(
+		self.planetPosRelEarthCPUBuf.v
+	)
+
+	self.calcTideAndGravKernel(nil, nil, 15)	-- 1 2 4 8 = tidal tangent horizontal, gravity tangent horizontal
+	local forcemin = self.reduceMin(self.forceBuffer)
+	local forcemax self.reduceMax(self.forceBuffer)
+
+	self.rescaleKernel(nil, nil, forcemin, forcemax)
+
+	self.forceTex
+		:bind()
+		:subimage()
+		:unbind()
+end -- COMPUTE_TIDES
 end
 
 App.event = |:,e| do
@@ -992,7 +1263,7 @@ App.event = |:,e| do
 	end
 end
 
-local inputText=|l,t,k| 
+local inputText=|l,t,k|
 	--ig.luatableInputFloat(l, t, k)
 	--ig.luatableInputFloatAsText(l, t, k)
 	ig.luatableInputFloatAsText(l, t, k, ig.ImGuiInputTextFlags_EnterReturnsTrue)
@@ -1029,7 +1300,7 @@ App.updateGUI = |:| do
 			for _,angle in ipairs(drawPlanetAngles) do
 				ig.igSameLine()
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
-			end		
+			end
 			inputText('julianBaseAngle', vars, 'julianBaseAngle')
 
 			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
@@ -1055,8 +1326,9 @@ App.updateGUI = |:| do
 			ig.igText('julian date = '..selQuakeJulianDate)
 			ig.igText('earthquake place = '..eq.place)
 			ig.igText('# touching arcs = '..#eq.touchingCircles)
-			ig.igText('oldestEarthquakeIndex = '..oldestEarthquakeIndex)
-			ig.igText('oldest earthquake time = '..earthquakes[oldestEarthquakeIndex].time)
+			ig.igText('current quake time = '..earthquakes[earthquakeWindowStartIndex].time)
+			ig.igText('earthquakeWindowStartIndex = '..earthquakeWindowStartIndex)
+			ig.igText('earthquakeWindowEndIndex = '..earthquakeWindowEndIndex)
 
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -180, 180)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)

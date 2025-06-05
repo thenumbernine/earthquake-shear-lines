@@ -148,27 +148,29 @@ end
 
 
 
-
-for _,eq in ipairs(earthquakes) do
-	-- add preprocessed fields	
-	local Y,m,d,H,M,S = eq.time:match'^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d%.%d%d%d)Z$'
-	assert(Y)	-- ... and the others should be there too
-	local mustbenumber = |x| do
-		return tonumber(x) or error("failed to parse "..tostring(x))
+timer('calc xyz', ||do
+	for _,eq in ipairs(earthquakes) do
+		-- add preprocessed fields	
+		local Y,m,d,H,M,S = eq.time:match'^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d%.%d%d%d)Z$'
+		assert(Y)	-- ... and the others should be there too
+		local mustbenumber = |x| do
+			return tonumber(x) or error("failed to parse "..tostring(x))
+		end
+		eq.date = {
+			year = mustbenumber(Y),
+			month = mustbenumber(m),
+			day = mustbenumber(d),
+			hour = mustbenumber(H),
+			min = mustbenumber(M),
+			sec = mustbenumber(S),
+		}
+		eq.ostime = timegm(eq.date)
+		eq.xyz = latLonToXYZ(eq)
+		eq.xyznorm = vec3d(eq.xyz:unpack()):normalize()
+		eq.circles = {}	-- keys are a set of indexes of circles in allCircles that use this point for construction (i.e. it is exactly on)
 	end
-	eq.date = {
-		year = mustbenumber(Y),
-		month = mustbenumber(m),
-		day = mustbenumber(d),
-		hour = mustbenumber(H),
-		min = mustbenumber(M),
-		sec = mustbenumber(S),
-	}
-	eq.ostime = timegm(eq.date)
-	eq.xyz = latLonToXYZ(eq)
-	eq.xyznorm = vec3d(eq.xyz:unpack()):normalize()
-end
-earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
+	earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
+end)
 
 return {
 	-- for getting earthquakes
