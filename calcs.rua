@@ -166,6 +166,7 @@ for _,eq in ipairs(earthquakes) do
 	}
 	eq.ostime = timegm(eq.date)
 	eq.xyz = latLonToXYZ(eq)
+	eq.xyznorm = vec3d(eq.xyz:unpack()):normalize()
 end
 earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
 

@@ -122,7 +122,7 @@ vec2 applyLatLonRoll0(vec2 latlon) {
 	return cartesianToLatLonWGS84(pos / WGS84_a).xy * (180. /  M_PI);
 #else // sphere
 	vec3 pos = chart_sphere(vec3(latlon, 0.));
-pos.xyz = pos.zxy;
+	pos.xyz = pos.zxy;
 
 	vec2 latcs = vec2exp(latlonroll0.x * M_PI / 180.);
 	vec2 loncs = vec2exp(latlonroll0.y * M_PI / 180.);
@@ -132,7 +132,7 @@ pos.xyz = pos.zxy;
 	pos = rotateZ(pos, latlonroll0.y * M_PI / 180.);
 
 	// chartInv_sphere expects north pole to be z+, prime meridian to be x+
-pos.zxy = pos.xyz;
+	pos.zxy = pos.xyz;
 	return chartInv_sphere(pos).xy;
 #endif
 }
@@ -144,7 +144,7 @@ vec2 applyLatLonRoll0Inv(vec2 latlon) {
 	return cartesianToLatLonWGS84(pos / WGS84_a).xy * (180. /  M_PI);
 #else // sphere
 	vec3 pos = chart_sphere(vec3(latlon, 0.));
-pos.xyz = pos.zxy;
+	pos.xyz = pos.zxy;
 
 	vec2 latcs = vec2exp(latlonroll0.x * M_PI / 180.);
 	vec2 loncs = vec2exp(latlonroll0.y * M_PI / 180.);
@@ -155,7 +155,7 @@ pos.xyz = pos.zxy;
 	pos = rotateX(pos, -latlonroll0.z * M_PI / 180.);
 
 	// chartInv_sphere expects north pole to be z+, prime meridian to be x+
-pos.zxy = pos.xyz;
+	pos.zxy = pos.xyz;
 	return chartInv_sphere(pos).xy;
 #endif
 }
@@ -778,6 +778,11 @@ void main() {
 	circles = allCircles
 	--]=]
 
+	-- while we're here, let's compute the tidal and gravitational forces of our planets ...
+	-- TODO take it from my solarsystem project where I'm already doing this
+	-- but compute shader? does GL support double buffers? I don't think so . . .
+	-- maybe I have to use OpenCL now
+
 	recalculateOldestEarthquakeIndex()
 	self:recalcAllCircles()
 	self:updateEarthquakeIndex()
@@ -972,6 +977,11 @@ App.event = |:,e| do
 	end
 end
 
+local inputText=|l,t,k| 
+	--ig.luatableInputFloat(l, t, k)
+	--ig.luatableInputFloatAsText(l, t, k)
+	ig.luatableInputFloatAsText(l, t, k, ig.ImGuiInputTextFlags_EnterReturnsTrue)
+
 App.updateGUI = |:| do
 	ig.igSetNextWindowBgAlpha(.3)
 	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
@@ -987,12 +997,12 @@ App.updateGUI = |:| do
 			end
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
-			ig.luatableInputFloat('pointSize', vars, 'pointSize')
+			inputText('pointSize', vars, 'pointSize')
 
 			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
-			ig.luatableInputFloat('angleFade', vars, 'angleFade')
+			inputText('angleFade', vars, 'angleFade')
 
 			-- TODO multiple checkboxes for angles
 			ig.igText'Show Planets: '
@@ -1005,7 +1015,7 @@ App.updateGUI = |:| do
 				ig.igSameLine()
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
 			end		
-			ig.luatableInputFloat('julianBaseAngle', vars, 'julianBaseAngle')
+			inputText('julianBaseAngle', vars, 'julianBaseAngle')
 
 			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
 				self:refreshRelevantCircles()
@@ -1062,22 +1072,22 @@ App.updateGUI = |:| do
 			ig.igEndMenu()
 		end
 		if ig.igBeginMenu'circles:' then
-			if ig.luatableInputFloat('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
+			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
 				self:recalcAllCircles()
 			end
-			if ig.luatableInputFloat('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
+			if inputText('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
 				self:recalcAllCircles()
 			end
-			if ig.luatableInputFloat('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
+			if inputText('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
 				self:recalcAllCircles()
 			end
-			if ig.luatableInputFloat('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
+			if inputText('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
 				self:recalcAllCircles()
 			end
-			if ig.luatableInputFloat('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
+			if inputText('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
 				self:recalcAllCircles()
 			end
-			if ig.luatableInputFloat('timeWindowInDays', calcCircles, 'timeWindowInDays') then
+			if inputText('timeWindowInDays', calcCircles, 'timeWindowInDays') then
 				recalculateOldestEarthquakeIndex()
 				self:recalcAllCircles()
 			end
