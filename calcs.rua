@@ -66,6 +66,7 @@ end
 local earthquakes = table()
 local checkTime = time()
 local prevDays = 31
+--local prevDays = 365
 do	-- I wish for-loops worked with cdata primitives ...
 	local t = checkTime - prevDays * dayInSec
 	while t <= checkTime - dayInSec do

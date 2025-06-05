@@ -196,7 +196,6 @@ so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offse
 --]]
 		--julianBaseAngle = 148,	-- based on the quake at 2025-05-04-00:00:00
 		julianBaseAngle = 107,		-- based on the quake at 2025-06-04-13:22:00
-		earthTilt = 23 + 1/60*(26 + 1/60*(21.4119)),
 		--[=[ TODO
 		drawAxisTorques = true,
 		axisTorquePointSize = 3,
@@ -853,7 +852,6 @@ App.update = |:| do
 			sceneObj.uniforms.angleFade = 1
 			local earthPos = planets[Planets.indexes.earth].pos
 			local tiltToEarth = |v| do
-				v = rotateX(v, math.rad(vars.earthTilt))
 				v = rotateZ(v, 
 					math.rad(vars.julianBaseAngle)
 					+ ((selQuakeJulianDate % 1) + .5) * -2 * math.pi * (   
@@ -1008,7 +1006,6 @@ App.updateGUI = |:| do
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
 			end		
 			ig.luatableInputFloat('julianBaseAngle', vars, 'julianBaseAngle')
-			ig.luatableInputFloat('earthTilt', vars, 'earthTilt')
 
 			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
 				self:refreshRelevantCircles()
