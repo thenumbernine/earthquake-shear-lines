@@ -182,7 +182,10 @@ local vars = table(
 		greatArcAlpha = .1,
 		lineWidth = 1,
 		angleFade = 1,
-		drawPlanets = planetClasses:mapi(|c|(true,c.name)),	-- drawPlanets[name] = true
+		drawPlanets = planetClasses:mapi(|c|(
+			c.name == 'sun' or c.name == 'moon',
+			c.name
+		)),	-- drawPlanets[name] = true
 		drawPlanetAngles = drawPlanetAngles:mapi(|x|(true,x)),
 		-- trying to fine-tune this one, wonder why I have to ...
 		-- is my julian date calculator off?
@@ -672,7 +675,6 @@ void main() {
 
 
 	gl.glEnable(gl.GL_DEPTH_TEST)
-	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE) --gl.GL_ONE_MINUS_SRC_ALPHA)
 
 
 	--[=[ build here
@@ -831,6 +833,8 @@ App.update = |:| do
 		local eq = earthquakes[vars.earthquakeIndex]
 		
 		gl.glLineWidth(vars.lineWidth)
+		--gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 		gl.glEnable(gl.GL_BLEND)
 		gl.glDepthMask(0)
 
@@ -849,10 +853,10 @@ App.update = |:| do
 				local t1 = earthquakes[c.indexes[1]].ostime
 				local t2 = earthquakes[c.indexes[2]].ostime
 				local tavg = .5 * (t1 + t2)
-				if tavg < eq.os.time then
-					sceneObj.uniforms.color = {c.color.x, 0, 0}
+				if tavg < eq.ostime then
+					sceneObj.uniforms.color = {c.color.x, .1 * c.color.y, .1 * c.color.z}
 				else
-					sceneObj.uniforms.color = {0, c.color.y, 0}
+					sceneObj.uniforms.color = {.1 * c.color.x, c.color.y, .1 * c.color.z}
 				end
 				sceneObj.uniforms.axis = {c.axis:unpack()}
 				sceneObj.uniforms.axis2 = {c.axis2:unpack()}
@@ -1050,7 +1054,7 @@ App.updateGUI = |:| do
 			ig.igText('earthquake time = '..eq.time)
 			ig.igText('julian date = '..selQuakeJulianDate)
 			ig.igText('earthquake place = '..eq.place)
-			ig.igText('# touching arcs = '..eq.touchingCircles)
+			ig.igText('# touching arcs = '..#eq.touchingCircles)
 			ig.igText('oldestEarthquakeIndex = '..oldestEarthquakeIndex)
 			ig.igText('oldest earthquake time = '..earthquakes[oldestEarthquakeIndex].time)
 
