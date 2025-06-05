@@ -798,6 +798,8 @@ App.refreshRelevantCircles = |:| do
 			.touchingCircles:mapi(|t| allCircles[t.circle])
 	else
 		-- show all circles touching any active earthquakes in the last timeframe
+		-- TODO also include future window ... but also TODO should we show future earthquakes too?
+		-- TODO earthquake window slider relative to the previous quake?
 		local circleIndexes = table()
 		for i=oldestEarthquakeIndex,vars.earthquakeIndex do
 			for _,ci in ipairs(circlesMadeByQuakes[i]) do
@@ -826,6 +828,8 @@ App.update = |:| do
 	end
 
 	do
+		local eq = earthquakes[vars.earthquakeIndex]
+		
 		gl.glLineWidth(vars.lineWidth)
 		gl.glEnable(gl.GL_BLEND)
 		gl.glDepthMask(0)
@@ -842,7 +846,14 @@ App.update = |:| do
 		sceneObj.uniforms.alpha = vars.greatArcAlpha
 		if vars.drawGreatArcs then
 			for _,c in ipairs(circles) do
-				sceneObj.uniforms.color = {c.color:unpack()}
+				local t1 = earthquakes[c.indexes[1]].ostime
+				local t2 = earthquakes[c.indexes[2]].ostime
+				local tavg = .5 * (t1 + t2)
+				if tavg < eq.os.time then
+					sceneObj.uniforms.color = {c.color.x, 0, 0}
+				else
+					sceneObj.uniforms.color = {0, c.color.y, 0}
+				end
 				sceneObj.uniforms.axis = {c.axis:unpack()}
 				sceneObj.uniforms.axis2 = {c.axis2:unpack()}
 				sceneObj.uniforms.axis3 = {c.axis3:unpack()}
@@ -1027,16 +1038,19 @@ App.updateGUI = |:| do
 			--]=]
 
 			local changed
-			local old = vars.earthquakeIndex
+			local oldEarthquakeIndex = vars.earthquakeIndex
 			changed = ig.luatableSliderFloat('earthquakeIndex s', vars, 'earthquakeIndex', 1, #earthquakes)
 			changed = ig.luatableInputInt('earthquakeIndex t', vars, 'earthquakeIndex', 1, #earthquakes) or changed
 			if changed then
-				vars.earthquakeIndex ??= old
+				vars.earthquakeIndex ??= oldEarthquakeIndex	-- if we got bad input then don't crash
 				self:updateEarthquakeIndex()
 			end
-			ig.igText('earthquake time = '..earthquakes[vars.earthquakeIndex].time)
+			local eq = earthquakes[vars.earthquakeIndex]
+
+			ig.igText('earthquake time = '..eq.time)
 			ig.igText('julian date = '..selQuakeJulianDate)
-			ig.igText('earthquake place = '..earthquakes[vars.earthquakeIndex].place)
+			ig.igText('earthquake place = '..eq.place)
+			ig.igText('# touching arcs = '..eq.touchingCircles)
 			ig.igText('oldestEarthquakeIndex = '..oldestEarthquakeIndex)
 			ig.igText('oldest earthquake time = '..earthquakes[oldestEarthquakeIndex].time)
 
