@@ -163,6 +163,11 @@ pos.zxy = pos.xyz;
 
 ]]
 
+local planetClasses = table.filter(Planets.planetClasses, |c| c.name ~= 'earth')
+-- should I do some geometry-index stuff too or nah?
+local drawPlanetAngles = table{
+	1, 5, 15, 30, 45, 60, 90, 120, 135, 150, 175, 179
+}
 
 local weightFields = chartCNames:mapi(|name| 'weight_'..name)
 local vars = table(
@@ -177,8 +182,8 @@ local vars = table(
 		greatArcAlpha = .1,
 		lineWidth = 1,
 		angleFade = 1,
-		drawSun = true,
-		drawMoon = true,
+		drawPlanets = planetClasses:mapi(|c|(true,c.name)),	-- drawPlanets[name] = true
+		drawPlanetAngles = drawPlanetAngles:mapi(|x|(true,x)),
 		-- trying to fine-tune this one, wonder why I have to ...
 		-- is my julian date calculator off?
 --[[
@@ -191,6 +196,7 @@ so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offse
 --]]
 		--julianBaseAngle = 148,	-- based on the quake at 2025-05-04-00:00:00
 		julianBaseAngle = 107,		-- based on the quake at 2025-06-04-13:22:00
+		earthTilt = 23 + 1/60*(26 + 1/60*(21.4119)),
 		--[=[ TODO
 		drawAxisTorques = true,
 		axisTorquePointSize = 3,
@@ -561,9 +567,10 @@ out vec3 posv;
 out vec4 colorv;
 
 uniform vec3 color;	// base color
-uniform vec3 axis2, axis3;	// axis dual = basis of circle
+uniform vec3 axis, axis2, axis3;	// axis dual = basis of circle
+uniform float declinationFromAxis;	// ... in radians
 uniform float influence;	// additive influence,
-uniform float angleFade;
+uniform float angleFade;	// how much to fade out from the centerPos / centerAngle
 uniform vec4 centerPos;	// .w = cos(centerAngle)
 
 
@@ -575,7 +582,11 @@ uniform vec3 latlonroll0;	// used for texturing, TODO FIXME proper 3d transform
 
 void main() {
 	float theta = vertex * 2. * M_PI;
-	vec3 v = axis2 * cos(theta) + axis3 * sin(theta);
+	
+	float decl = cos(declinationFromAxis);
+	float phi_r = sin(declinationFromAxis);
+
+	vec3 v = axis * decl + phi_r * (axis2 * cos(theta) + axis3 * sin(theta));
 	float cosAngle = dot(v, centerPos.xyz);
 	float alpha = clamp(cosAngle * centerPos.w + angleFade, 0., 1.);
 	colorv = vec4(color * influence, alpha);
@@ -819,6 +830,7 @@ App.update = |:| do
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
+		sceneObj.uniforms.declinationFromAxis = .5 * math.pi 
 		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.angleFade = vars.angleFade
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
@@ -827,6 +839,7 @@ App.update = |:| do
 		if vars.drawGreatArcs then
 			for _,c in ipairs(circles) do
 				sceneObj.uniforms.color = {c.color:unpack()}
+				sceneObj.uniforms.axis = {c.axis:unpack()}
 				sceneObj.uniforms.axis2 = {c.axis2:unpack()}
 				sceneObj.uniforms.axis3 = {c.axis3:unpack()}
 				sceneObj.uniforms.influence = c.influence
@@ -835,12 +848,12 @@ App.update = |:| do
 			end
 		end
 		gl.glDisable(gl.GL_BLEND)
-		if vars.drawSun or vars.drawMoon then
+		do
 			gl.glLineWidth(3)
 			sceneObj.uniforms.angleFade = 1
 			local earthPos = planets[Planets.indexes.earth].pos
 			local tiltToEarth = |v| do
-				v = rotateX(v, math.rad(23 + 1/60*(26 + 1/60*(21.4119))))
+				v = rotateX(v, math.rad(vars.earthTilt))
 				v = rotateZ(v, 
 					math.rad(vars.julianBaseAngle)
 					+ ((selQuakeJulianDate % 1) + .5) * -2 * math.pi * (   
@@ -851,31 +864,26 @@ App.update = |:| do
 				)
 				return v
 			end
-			if vars.drawSun then
-				local sunPos = planets[Planets.indexes.sun].pos
-				local sunDir = (sunPos - earthPos):normalize()
-				sunDir = tiltToEarth(sunDir)	-- rotate by earth tilt and time of day
-				local sunAxis2 = basisFor(sunDir)
-				local sunAxis3 = sunDir:cross(sunAxis2)
-				sceneObj.uniforms.color = {1,1,0}
-				sceneObj.uniforms.axis2 = {sunAxis2:unpack()}
-				sceneObj.uniforms.axis3 = {sunAxis3:unpack()}
-				sceneObj.uniforms.influence = 1
-				sceneObj.uniforms.centerPos = {0,0,0,1}
-				sceneObj:draw()
-			end
-			if vars.drawMoon then
-				local moonPos = planets[Planets.indexes.moon].pos
-				local moonDir = (moonPos - earthPos):normalize()
-				moonDir = tiltToEarth(moonDir)	-- rotate by earth tilt and time of day
-				local moonAxis2 = basisFor(moonDir)
-				local moonAxis3 = moonDir:cross(moonAxis2)
-				sceneObj.uniforms.color = {0,1,1}
-				sceneObj.uniforms.axis2 = {moonAxis2:unpack()}
-				sceneObj.uniforms.axis3 = {moonAxis3:unpack()}
-				sceneObj.uniforms.influence = 1
-				sceneObj.uniforms.centerPos = {0,0,0,1}
-				sceneObj:draw()
+			for _,planetClass in ipairs(planetClasses) do
+				if vars.drawPlanets[planetClass.name] then
+					for _,declAngle in ipairs(drawPlanetAngles) do
+						if vars.drawPlanetAngles[declAngle] then
+							local planetPos = planets[Planets.indexes[planetClass.name]].pos
+							local planetDir = (planetPos - earthPos):normalize()
+							planetDir = tiltToEarth(planetDir)	-- rotate by earth tilt and time of day
+							local axis2 = basisFor(planetDir)
+							local axis3 = planetDir:cross(axis2)
+							sceneObj.uniforms.declinationFromAxis = math.rad(declAngle) 
+							sceneObj.uniforms.color = planetClass.color
+							sceneObj.uniforms.axis = {planetDir:unpack()}
+							sceneObj.uniforms.axis2 = {axis2:unpack()}
+							sceneObj.uniforms.axis3 = {axis3:unpack()}
+							sceneObj.uniforms.influence = 1
+							sceneObj.uniforms.centerPos = {0,0,0,1}
+							sceneObj:draw()
+						end
+					end
+				end
 			end
 		end
 		gl.glDepthMask(1)
@@ -988,9 +996,19 @@ App.updateGUI = |:| do
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
 			ig.luatableInputFloat('angleFade', vars, 'angleFade')
 
-			ig.luatableCheckbox('drawSun', vars, 'drawSun')
-			ig.luatableCheckbox('drawMoon', vars, 'drawMoon')
+			-- TODO multiple checkboxes for angles
+			ig.igText'Show Planets: '
+			for _,planetClass in ipairs(planetClasses) do
+				ig.igSameLine()
+				ig.luatableTooltipCheckbox('draw '..planetClass.name, vars.drawPlanets, planetClass.name)
+			end
+			ig.igText'Show Planet Angles: '
+			for _,angle in ipairs(drawPlanetAngles) do
+				ig.igSameLine()
+				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
+			end		
 			ig.luatableInputFloat('julianBaseAngle', vars, 'julianBaseAngle')
+			ig.luatableInputFloat('earthTilt', vars, 'earthTilt')
 
 			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
 				self:refreshRelevantCircles()
