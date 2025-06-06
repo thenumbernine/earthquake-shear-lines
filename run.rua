@@ -253,18 +253,35 @@ end
 
 local earthquakeWindowStartIndex
 local earthquakeWindowEndIndex
+local flareWindowStartIndex = 0
+local flareWindowEndIndex = 0
 local recalculateOldestEarthquakeIndex = ||do
-	earthquakeWindowStartIndex = vars!.earthquakeIndex
+	-- TODO with bisect
 	local windowStartTime = earthquakes[vars.earthquakeIndex].ostime - calcCircles.timeWindowInDays * dayInSec
+	local windowEndTime = earthquakes[vars.earthquakeIndex].ostime + calcCircles.timeWindowInDays * dayInSec
+	
+	earthquakeWindowStartIndex = vars!.earthquakeIndex
 	for i=vars.earthquakeIndex,1,-1 do
 		if earthquakes[i].ostime < windowStartTime then break end
 		earthquakeWindowStartIndex = i
 	end
 	earthquakeWindowEndIndex = vars!.earthquakeIndex
-	local windowEndTime = earthquakes[vars.earthquakeIndex].ostime + calcCircles.timeWindowInDays * dayInSec
 	for i=vars.earthquakeIndex,#earthquakes do
 		if earthquakes[i].ostime > windowEndTime then break end
 		earthquakeWindowEndIndex = i
+	end
+
+	if #flares > 0 then
+		flareWindowStartIndex = #flares
+		for i=#flares,1,-1 do
+			if flares[i].ostime < windowStartTime then break end
+			flareWindowStartIndex = i
+		end
+		flareWindowEndIndex = flareWindowStartIndex
+		for i=flareWindowStartIndex,#flares do
+			if flares![i]!.ostime > windowEndTime then break end
+			flareWindowEndIndex = i
+		end
 	end
 end
 
@@ -1452,6 +1469,8 @@ App.updateGUI = |:| do
 			ig.igText('window end time = '..earthquakes[earthquakeWindowEndIndex].time)
 			ig.igText('window start index = '..earthquakeWindowStartIndex)
 			ig.igText('window end index = '..earthquakeWindowEndIndex)
+			ig.igText('earthquakes in window = '..(earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1))
+			ig.igText('flares in window = '..(flareWindowEndIndex - flareWindowStartIndex + 1))
 
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -180, 180)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
@@ -1513,8 +1532,7 @@ App.updateGUI = |:| do
 
 			ig.igEndMenu()
 		end
-		if ig.igBeginMenu'touching:' then
-			ig.igText('# touching arcs = '..#eq.touchingCircles)
+		if ig.igBeginMenu('touching '..#eq.touchingCircles) then
 			for i,t in ipairs(eq.touchingCircles) do
 				ig.igPushID_Int(i)
 				local c = allCircles[t.circle]

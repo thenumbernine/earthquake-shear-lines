@@ -28,7 +28,6 @@ for f in p:dir() do
 	if select(2, path(f):getext()) == 'txt' then
 		local y,m,d,ver = f.path:match'^dn_xrsf%-l2%-flsum_g16_d(%d%d%d%d)(%d%d)(%d%d)_v(%d%-%d%-%d)%.txt$'
 		if y then
-print('reading flares '..f)
 			y = mustbenumber(y)
 			m = mustbenumber(m)
 			d = mustbenumber(d)
@@ -41,9 +40,9 @@ print('reading flares '..f)
 						local timestamp = timestamp2000 + secSince2000
 						local date = gmtime(timestamp)
 						
-						local x = w[6]:sub(1,1)
+						local magnClass = w[6]:sub(1,1)
 						local submagn = mustbenumber(w[6]:sub(2):match'^%d%.%d$')
-						local magn = logIntensityForFlareClass[x] + submagn
+						local magn = logIntensityForFlareClass[magnClass] + submagn
 
 						-- TODO sun direction at time of the flare, using eph406 and rotateFromSolarToEarthFrame
 
@@ -51,6 +50,7 @@ print('reading flares '..f)
 							avgflux = mustbenumber(w[1]),
 							bgflux = mustbenumber(w[5]),
 							integratedFlux = mustbenumber(w[7]),
+							magnClass = magnClass,
 							magn = magn,
 							timestr = ('%04d-%02d-%0d2-%02d:%02d:%02d'):format(date.year, date.month, date.day, date.hour, date.min, date.sec),
 							ostime = timestamp,
