@@ -1359,6 +1359,7 @@ local inputText=|l,t,k|
 	ig.luatableInputFloatAsText(l, t, k, ig.ImGuiInputTextFlags_EnterReturnsTrue)
 
 App.updateGUI = |:| do
+	local eq = earthquakes[vars.earthquakeIndex]
 	ig.igSetNextWindowBgAlpha(.3)
 	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
 	if ig.igBeginMainMenuBar() then
@@ -1439,14 +1440,12 @@ App.updateGUI = |:| do
 				vars.earthquakeIndex ??= oldEarthquakeIndex	-- if we got bad input then don't crash
 				self:updateEarthquakeIndex()
 			end
-			local eq = earthquakes[vars.earthquakeIndex]
 
 			ig.igText('earthquake time = '..eq.time)
 			ig.igText('earthquake magn = '..eq.mag)	-- TODO just a side panel or pop up that shows all the earthquake stats
 			ig.igText('earthquake depth = '..eq.depth)	-- TODO incorporate this into the display somehow ...
 			ig.igText('earthquake julian day = '..selQuakeJulianDate)
 			ig.igText('earthquake place = '..eq.place)
-			ig.igText('# touching arcs = '..#eq.touchingCircles)
 			ig.igText('window start time = '..earthquakes[earthquakeWindowStartIndex].time)
 			ig.igText('window end time = '..earthquakes[earthquakeWindowEndIndex].time)
 			ig.igText('window start index = '..earthquakeWindowStartIndex)
@@ -1508,6 +1507,37 @@ App.updateGUI = |:| do
 						end
 					end
 				end
+			end
+
+			ig.igEndMenu()
+		end
+		if ig.igBeginMenu'touching:' then
+			ig.igText('# touching arcs = '..#eq.touchingCircles)
+			for i,t in ipairs(eq.touchingCircles) do
+				ig.igPushID_Int(i)
+				local c = allCircles[t.circle]
+				local i1, i2 = table.unpack(c.indexes)
+				local eq1 = earthquakes[i1]
+				local eq2 = earthquakes[i2]
+				ig.igText(i..':')
+				ig.igSameLine()
+				-- TODO tooltipButton text is always nothing so
+				local click = ig.igButton('#'..i1)
+				ig.hoverTooltip(eq1.place)
+				if click then
+					vars.earthquakeIndex = i1
+					self:updateEarthquakeIndex()
+				end
+				ig.igSameLine()
+				ig.igText'->'
+				ig.igSameLine()
+				local click = ig.igButton('#'..i2)
+				ig.hoverTooltip(eq2.place)
+				if click then
+					vars.earthquakeIndex = i2
+					self:updateEarthquakeIndex()
+				end
+				ig.igPopID()
 			end
 
 			ig.igEndMenu()
