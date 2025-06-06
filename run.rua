@@ -186,6 +186,20 @@ local drawPlanetAngles = table{
 -- this is only used for the ui, while the CL planetPos list has all of them, so that I can indivivdually index into it or something idk
 local calcPlanetClasses = table.filter(Planets.planetClasses, |c| c.name ~= 'EM_Bary')
 
+local calcFlagsCode = [[
+enum {
+	CALC_TIDAL_VERT = 1,
+	CALC_TIDAL_HORZ = 2,
+	CALC_TIDAL = CALC_TIDAL_VERT | CALC_TIDAL_HORZ,
+	CALC_GRAV_VERT = 4,
+	CALC_GRAV_HORZ = 8,
+	CALC_GRAV = CALC_GRAV_VERT | CALC_GRAV_HORZ,
+	CALC_CROSS_POS = 16,
+	CALC_CROSS_VEL = 32,
+};
+]]
+ffi.cdef(calcFlagsCode)
+
 local weightFields = chartCNames:mapi(|name| 'weight_'..name)
 local vars = table(
 	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
@@ -204,6 +218,8 @@ local vars = table(
 		calcHorzTides = false,
 		calcVertGrav = true,
 		calcHorzGrav = false,
+		calcCrossPos = false,	-- cross force with moment arm
+		calcCrossVel = false,
 		drawPlanets = drawPlanetClasses:mapi(|c|(
 			c.name == 'sun' or c.name == 'moon',
 			c.name
@@ -259,7 +275,7 @@ local recalculateOldestEarthquakeIndex = ||do
 	-- TODO with bisect
 	local windowStartTime = earthquakes[vars.earthquakeIndex].ostime - calcCircles.timeWindowInDays * dayInSec
 	local windowEndTime = earthquakes[vars.earthquakeIndex].ostime + calcCircles.timeWindowInDays * dayInSec
-	
+
 	earthquakeWindowStartIndex = vars!.earthquakeIndex
 	for i=vars.earthquakeIndex,1,-1 do
 		if earthquakes[i].ostime < windowStartTime then break end
@@ -890,7 +906,9 @@ if COMPUTE_TIDES then
 	}
 
 	self.calcTideAndGravProgram = self.env:program{
-		code = template([[
+		code = template(
+calcFlagsCode
+..[[
 real rad(real d) {
 	return d * M_PI / 180.;
 }
@@ -979,7 +997,7 @@ real4 calcTidalAccel(
 kernel void calcTideAndGrav(
 	global real * out,		// output[i] = force component specified
 	global real4 * const planetPosRelEarth,	// input positions[9] = (pos - earth.pos) x y z and mass = w
-	int component
+	int calcFlags
 ) {
 	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
 	// index, x = longitude = east/west, y = latitude = north/south
@@ -999,29 +1017,44 @@ kernel void calcTideAndGrav(
 	for (int j = 0; j < <?=#Planets.planetClasses?>; ++j) {
 	//for (int j = <?=Planets.indexes.earth-1?>; j <= <?=Planets.indexes.earth-1?>; ++j) {
 		if (planetPosRelEarth[j].w > 0.) {
-			if (component & 3) {
+			if (calcFlags & CALC_TIDAL) {
 				real4 tideAccel = calcTidalAccel(posOnEarth, normal, planetPosRelEarth[j]);
-				if ((component & 3) == 3) {
+				if (calcFlags & CALC_TIDAL == CALC_TIDAL) {
 					accel += tideAccel;
 				} else {
 					real4 tideNormal = normal * dot(tideAccel, normal);
 					real4 tideTangent = tideAccel - tideNormal;
-					if (component & 1) accel += tideNormal;
-					if (component & 2) accel += tideTangent;
+					if (calcFlags & CALC_TIDAL_VERT) accel += tideNormal;
+					if (calcFlags & CALC_TIDAL_HORZ) accel += tideTangent;
 				}
 			}
-			if (component & 0xc) {
+			if (calcFlags & CALC_GRAV) {
 				real4 gravAccel = calcGravityAccel(posOnEarth, planetPosRelEarth[j]);
-				if ((component & 0xc) == 0xc) {
+				if (calcFlags & CALC_GRAV == CALC_GRAV) {
 					accel += gravAccel;
 				} else {
 					real4 gravNormal = normal * dot(gravAccel, normal);
 					real4 gravTangent = gravAccel - gravNormal;
-					if (component & 4) accel += gravNormal;
-					if (component & 8) accel += gravTangent;
+					if (calcFlags & CALC_GRAV_VERT) accel += gravNormal;
+					if (calcFlags & CALC_GRAV_HORZ) accel += gravTangent;
 				}
 			}
 		}
+	}
+
+	if (calcFlags & CALC_CROSS_POS) {
+		accel = cross(posOnEarth, accel);	// torque = position cross accel
+		// TODO what about velocity as well? going with vs against earth rotation?
+	}
+	if (calcFlags & CALC_CROSS_VEL) {
+		real radsPerSec = 2. * M_PI / (1. - 1. / 365.25) / (60. * 60. * 24.);
+		real4 velOnEarth = (real4)(
+			radsPerSec * -posOnEarth.y,
+			radsPerSec * posOnEarth.x,
+			0.,
+			0.
+		);
+		accel = cross(velOnEarth, accel);
 	}
 
 	out[index] = length(accel);
@@ -1334,10 +1367,12 @@ if COMPUTE_TIDES then
 	self.planetPosRelEarthBuffer:fromCPU(self.planetPosRelEarthCPUBuf.v)
 
 	self.calcTideAndGravKernel.obj:setArg(2, int(0
-		| (vars.calcVertTides and 1 or 0)
-		| (vars.calcHorzTides and 2 or 0)
-		| (vars.calcVertGrav and 4 or 0)
-		| (vars.calcHorzGrav and 8 or 0)
+		| (vars.calcVertTides and ffi.C.CALC_TIDAL_VERT or 0)
+		| (vars.calcHorzTides and ffi.C.CALC_TIDAL_HORZ or 0)
+		| (vars.calcVertGrav and ffi.C.CALC_GRAV_VERT or 0)
+		| (vars.calcHorzGrav and ffi.C.CALC_GRAV_HORZ or 0)
+		| (vars.calcCrossPos and ffi.C.CALC_CROSS_POS or 0)
+		| (vars.calcCrossVel and ffi.C.CALC_CROSS_VEL or 0)
 	))
 	self.calcTideAndGravKernel()
 
@@ -1415,6 +1450,14 @@ App.updateGUI = |:| do
 			end
 			ig.igSameLine()
 			if ig.luatableTooltipCheckbox('calcHorzGrav', vars, 'calcHorzGrav') then
+				self:refreshForceBuffer()
+			end
+			ig.igSameLine()
+			if ig.luatableTooltipCheckbox('calcCrossPos', vars, 'calcCrossPos') then
+				self:refreshForceBuffer()
+			end
+			ig.igSameLine()
+			if ig.luatableTooltipCheckbox('calcCrossVel', vars, 'calcCrossVel') then
 				self:refreshForceBuffer()
 			end
 
