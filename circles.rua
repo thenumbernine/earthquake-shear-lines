@@ -1,4 +1,6 @@
 local vec3d = require 'vec-ffi.vec3d'
+local bisect = require 'bisect'.bisect
+local bisectrev = require 'bisect'.bisectrev
 
 local M = {}
 
@@ -140,7 +142,11 @@ M.calcCircles=|earthquakes|do
 				if earthquakes[j].ostime > windowEnd then break end
 				earthquakeWindowIndexEnd = j
 			end
-			
+			--[=[ find it faster using bisect method?
+			local earthquakeWindowIndexStart = bisectrev(earthquakes, |e| windowStart < e.ostime, 1, i)
+			local earthquakeWindowIndexEnd = bisect(earthquakes, |e| e.ostime < windowEnd, i)
+			--]=]
+
 			local circlesInTimeWindow = {}
 			-- find all circles that this set of quakes touch
 			for j=earthquakeWindowIndexStart,earthquakeWindowIndexEnd do

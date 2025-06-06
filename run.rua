@@ -7,6 +7,7 @@ local GLArrayBuffer = require 'gl.arraybuffer'
 local GLProgram = require 'gl.program'
 local GLGeometry = require 'gl.geometry'
 local GLTex2D = require 'gl.tex2d'
+local GLGradientTex2D = require 'gl.gradienttex2d'
 local ig = require 'imgui'
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
@@ -15,21 +16,21 @@ local vector = require 'ffi.cpp.vector-lua'
 local CLEnv = require 'cl.obj.env'
 local clnumber = require 'cl.obj.number'
 
+local Planets = require 'solarsystem.planets'
+local Julian = require 'solarsystem.julian'
+
 local basisFor = require 'basis'.basisFor
 local rotateX = require 'basis'.rotateX
 local rotateY = require 'basis'.rotateY
 local rotateZ = require 'basis'.rotateZ
 
-local dayInSec = 60 * 60 * 24
-
 local charts = require 'charts'.charts
 local chartCode = require 'charts'.chartCode
 local chartCNames = require 'charts'.chartCNames
 
-local calcs = require 'calcs'
-local getDayCache = calcs.getDayCache
-local checkTime = calcs.checkTime
-local earthquakes = calcs.earthquakes
+local getDayCache = require 'earthquakes'.getDayCache
+local checkTime = require 'earthquakes'.checkTime
+local earthquakes = require 'earthquakes'.earthquakes
 local checkDuration = 60*5	-- re-check every 5 mins
 
 local time = require 'time'.time
@@ -39,9 +40,15 @@ local gmtime = require 'time'.gmtime
 local calcCircles = require 'circles'
 
 
-local Planets = require 'solarsystem.planets'
-local Julian = require 'solarsystem.julian'
+local dayInSec = 60 * 60 * 24
 
+local COMPUTE_TIDES = true
+
+local intptr = ffi.new'int[1]'
+local int = |x| do intptr[0] = x return intptr end
+
+local floatptr = ffi.new'float[1]'
+local float = |x| do floatptr[0] = x return floatptr end
 
 for _,name in ipairs(chartCNames) do
 	chartCode ..= '\nuniform float weight_'..name..';'
@@ -187,6 +194,11 @@ local vars = table(
 		greatArcAlpha = .1,
 		lineWidth = 1,
 		angleFade = 1,
+		forceTexAlpha = .5,
+		calcHorzTides = true,
+		calcVertTides = true,
+		calcHorzGrav = true,
+		calcVertGrav = true,
 		drawPlanets = planetClasses:mapi(|c|(
 			c.name == 'sun' or c.name == 'moon',
 			c.name
@@ -296,6 +308,12 @@ App.initGL = |:| do
 		})
 	end
 
+	local texWrap = {
+		s = gl.GL_REPEAT,
+		--t = gl.GL_CLAMP_TO_EDGE,
+		t = gl.GL_CLAMP_TO_BORDER,
+	}
+	
 	self.globeObj = GLSceneObject{
 		program = {
 			version = 'latest',
@@ -405,15 +423,25 @@ in vec2 texcoordg;
 out vec4 fragColor;
 
 uniform sampler2D earthTex;
+uniform sampler2D forceTex;
+uniform sampler2D gradientTex;
+
 uniform float alpha;
+uniform float forceTexAlpha;
 
 void main() {
-	fragColor = texture(earthTex, vec2(texcoordg.x, 1. - texcoordg.y));
+	vec2 uv = vec2(texcoordg.x, 1. - texcoordg.y);
+	fragColor = texture(earthTex, uv);
+	float force = texture(forceTex, uv).r;
+	vec4 forceColor = texture(gradientTex, vec2(force, .5));
+	fragColor = mix(fragColor, forceColor, forceTexAlpha);
 	fragColor.a = alpha;
 }
 ]],
 			uniforms = {
 				earthTex = 0,
+				forceTex = 1,
+				gradientTex = 2,
 				alpha = .5,
 			},
 		},
@@ -423,14 +451,10 @@ void main() {
 			GLTex2D{
 				filename = 'earth-color.png',
 				magFilter = gl.GL_LINEAR,
-				minFilter = gl.GL_NEAREST,
-				--minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
-				--generateMipmap = true,
-				wrap = {
-					s = gl.GL_REPEAT,
-					--t = gl.GL_CLAMP_TO_EDGE,
-					t = gl.GL_CLAMP_TO_BORDER,
-				},
+				--minFilter = gl.GL_NEAREST,
+				minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+				generateMipmap = true,
+				wrap = texWrap,
 			}:unbind(),
 		},
 		uniforms = {
@@ -811,7 +835,8 @@ if COMPUTE_TIDES then
 	-- but compute shader? does GL support double buffers? I don't think so . . .
 	-- maybe I have to use OpenCL now
 
-	self.clsize = {200,100}
+	self.clsize = {200,100}		-- or maybe "forceTexDim" or something
+	self.clvolume = self.clsize[1] * self.clsize[2]
 	self.env = CLEnv{
 		verbose = true,
 		useGLSharing = false,
@@ -820,7 +845,7 @@ if COMPUTE_TIDES then
 		--getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
 		--getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
 		--deviceType = CLEnv.getDeviceTypeFromCmdLine(...),
-		size = size,
+		size = self.clsize,
 	}
 
 	self.calcTideAndGravProgram = self.env:program{
@@ -911,8 +936,7 @@ real4 calcTidalAccel(
 kernel void calcTideAndGrav(
 	global real * out,		// output[i] = force component specified
 	global real4 * const planetPosRelEarth,	// input positions[9] = (pos - earth.pos) x y z and mass = w
-	int component,
-	int numPlanets
+	int component
 ) {
 	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
 	// index, x = longitude = east/west, y = latitude = north/south
@@ -928,28 +952,28 @@ kernel void calcTideAndGrav(
 	real4 accel = (real4)(0., 0., 0., 0.);
 
 	for (int j = 0; j < <?=#Planets.planetClasses?>; ++j) {
-		real4 tideAccel;
 		if (component & 3) {
-			tideAccel = calcTidalAccel(posOnEarth, normal, planetPosRelEarth);
-		} else {
-			tideAccel = (real4)(0., 0., 0., 0.);
+			real4 tideAccel = calcTidalAccel(posOnEarth, normal, planetPosRelEarth[j]);
+			if (component & 3 == 3) {
+				accel += tideAccel;
+			} else {
+				real4 tideNormal = normal * dot(tideAccel, normal);
+				real4 tideTangent = tideAccel - tideNormal;
+				if (component & 1) accel += tideNormal;
+				if (component & 2) accel += tideTangent;
+			}
 		}
-		real4 gravAccel = (real4)(0., 0., 0., 0.);
 		if (component & 0xc) {
-			gravAccel = calcGravityAccel(posOnEarth, normal, planetPosRelEarth);
-		} else {
-			gravAccel = (real4)(0., 0., 0., 0.);
+			real4 gravAccel = calcGravityAccel(posOnEarth, planetPosRelEarth[j]);
+			if (component & 0xc == 0xc) {
+				accel += gravAccel;
+			} else {
+				real4 gravNormal = normal * dot(gravAccel, normal);
+				real4 gravTangent = gravAccel - gravNormal;
+				if (component & 4) accel += gravNormal;
+				if (component & 8) accel += gravTangent;
+			}
 		}
-
-		real4 tideNormal = normal * dot(tideAccel, normal);
-		real4 tideTangent = tideAccel - tideNormal;
-		real4 gravNormal = normal * dot(gravAccel, normal);
-		real4 gravTangent = gravAccel - gravNormal;
-
-		if (component & 1) accel += tideNormal;
-		if (component & 2) accel += tideTangent;
-		if (component & 4) accel += gravNormal;
-		if (component & 8) accel += gravTangent;
 	}
 
 	out[index] = length(accel);
@@ -972,55 +996,50 @@ kernel void rescale(
 			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
 		}),
 	}
-	self.clvolume = self.clsize[1] * self.clsize[2]
 
 	self.calcTideAndGravProgram:compile()
 
-	self.forceBuffer = env:buffer{name='forceBuffer', type='real'}
+	self.forceBuffer = self.env:buffer{name='forceBuffer', type='real'}
 
 	self.rescaleForceCPUBuf = vector('float', self.clvolume)
-	self.rescaleForceBuffer = env:buffer{name='forceBuffer', type='float'}
+	self.rescaleForceBuffer = self.env:buffer{name='forceBuffer', type='float'}
 
-	self.reduceBuffer = env:buffer{name='reduceBuffer', type='real'}
-	self.reduceSwapBuffer = env:buffer{name='reduceSwapBuffer', type='real'}
+	self.reduceBuffer = self.env:buffer{name='reduceBuffer', type='real'}
+	self.reduceSwapBuffer = self.env:buffer{name='reduceSwapBuffer', type='real'}
 	self.reduceResultPtr = ffi.new'real[1]'
 	self.reduceResultPtr[0] = 0
 
-	self.planetPosRelEarthCPUBuf = vector('cl_real4', #Planets.planetClasses)
-	self.planetPosRelEarthBuffer = env:buffer{
+	self.planetPosRelEarthCPUBuf = vector('real4', #Planets.planetClasses)
+	self.planetPosRelEarthBuffer = self.env:buffer{
 		name = 'planetPosRelEarthBuffer',
 		type = 'real4',
 		size = {#Planets.planetClasses},
 	}	-- all planets, including earth, because maybe we want it too.
 
-	self.calcTideAndGravKernel = self.calcTideAndGravProgram:kernel(
-		'calcTideAndGrav',
-		self.forceBuffer,
-		self.planetPosRelEarthBuffer
-	)
+	self.calcTideAndGravKernel = self.calcTideAndGravProgram:kernel'calcTideAndGrav'
+	self.calcTideAndGravKernel.obj:setArg(0, self.forceBuffer)
+	self.calcTideAndGravKernel.obj:setArg(1, self.planetPosRelEarthBuffer)
 
 	-- TODO instead of this, use GL sharing?
-	self.rescaleKernel = self.calcTideAndGravProgram:kernel(
-		'rescale',
-		self.rescaleForceBuffer,
-		self.forceBuffer
-	)
+	self.rescaleKernel = self.calcTideAndGravProgram:kernel'rescale'
+	self.rescaleKernel.obj:setArg(0, self.rescaleForceBuffer)
+	self.rescaleKernel.obj:setArg(1, self.forceBuffer)
 
-	self.reduceMin = self.app.env:reduce{
+	self.reduceMin = self.env:reduce{
 		count = self.clvolume,
 		op = |x,y| 'min('..x..', '..y..')',
 		initValue = 'INFINITY',
-		buffer = self.reduceBuffer,
-		swapBuffer = self.reduceSwapBuffer,
+		buffer = self.reduceBuffer.obj,
+		swapBuffer = self.reduceSwapBuffer.obj,
 		result = self.reduceResultPtr,
 	}
 
-	self.reduceMax = self.app.env:reduce{
+	self.reduceMax = self.env:reduce{
 		count = self.clvolume,
 		op = |x,y| 'max('..x..', '..y..')',
 		initValue = '-INFINITY',
-		buffer = self.reduceBuffer,
-		swapBuffer = self.reduceSwapBuffer,
+		buffer = self.reduceBuffer.obj,
+		swapBuffer = self.reduceSwapBuffer.obj,
 		result = self.reduceResultPtr,
 	}
 
@@ -1029,11 +1048,25 @@ kernel void rescale(
 	self.forceTex = GLTex2D{
 		width = self.clsize[1],
 		height = self.clsize[2],
+		minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+		magFilter = gl.GL_LINEAR,
+		wrap = texWrap,
 		internalFormat = info.internalFormat,
 		format = info.format,
 		type = info.types[1],
 		data = self.rescaleForceCPUBuf.v,
 	}:unbind()
+	self.globeObj.texs:insert(self.forceTex)
+	self.gradientTex = GLGradientTex2D(
+		256, {
+			{1,0,0,1},
+			{1,1,0,1},
+			{0,1,0,1},
+			{0,1,1,1},
+			{1,0,1,1},
+		}, true
+	):unbind()
+	self.globeObj.texs:insert(self.gradientTex)
 end -- COMPUTE_TIDES
 
 	recalculateOldestEarthquakeIndex()
@@ -1068,7 +1101,6 @@ App.update = |:| do
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
 	if vars.drawEarth then
-		-- [=====[ BEGIN CLIP FROM GEOGRAPHIC-CHARTS
 		local sceneObj = self.globeObj
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
@@ -1076,8 +1108,8 @@ App.update = |:| do
 		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		sceneObj.uniforms.forceTexAlpha = vars.forceTexAlpha
 		sceneObj:draw()
-		--]=====] END CLIP FROM GEOGRAPHIC-CHARTS
 	end
 
 	do
@@ -1241,19 +1273,27 @@ if COMPUTE_TIDES then
 		dst.z = v.z
 		dst.w = planets[i].mass
 	end
-	self.planetPosRelEarthBuffer:setData(
-		self.planetPosRelEarthCPUBuf.v
-	)
+	self.planetPosRelEarthBuffer:fromCPU(self.planetPosRelEarthCPUBuf.v)
 
-	self.calcTideAndGravKernel(nil, nil, 15)	-- 1 2 4 8 = tidal tangent horizontal, gravity tangent horizontal
-	local forcemin = self.reduceMin(self.forceBuffer)
-	local forcemax self.reduceMax(self.forceBuffer)
+	self.calcTideAndGravKernel.obj:setArg(2, int(0
+		| (vars.calcHorzTides and 1 or 0)
+		| (vars.calcVertTides and 2 or 0)
+		| (vars.calcHorzGrav and 4 or 0)
+		| (vars.calcVertGrav and 8 or 0)
+	))
+	self.calcTideAndGravKernel()
+	
+	self.forceMin = self.reduceMin(self.forceBuffer.obj)
+	self.forceMax = self.reduceMax(self.forceBuffer.obj)
 
-	self.rescaleKernel(nil, nil, forcemin, forcemax)
+	self.rescaleKernel.obj:setArg(2, float(self.forceMin))
+	self.rescaleKernel.obj:setArg(3, float(self.forceMax))
+	self.rescaleKernel()
 
 	self.forceTex
 		:bind()
 		:subimage()
+		:generateMipmap()
 		:unbind()
 end -- COMPUTE_TIDES
 end
@@ -1299,6 +1339,16 @@ App.updateGUI = |:| do
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
 			inputText('angleFade', vars, 'angleFade')
+			
+			ig.igText'force calcs:'
+			ig.igSameLine()
+			ig.luatableCheckbox('calcHorzTides', vars, 'calcHorzTides')
+			ig.luatableCheckbox('calcVertTides', vars, 'calcVertTides')
+			ig.luatableCheckbox('calcHorzGrav', vars, 'calcHorzGrav')
+			ig.luatableCheckbox('calcVertGrav', vars, 'calcVertGrav')
+			ig.igText('force min='..self.forceMin..' max='..self.forceMax)
+			ig.luatableSliderFloat('forceTexAlpha', vars, 'forceTexAlpha', 0, 1)
+
 
 			-- TODO multiple checkboxes for angles
 			ig.igText'Show Planets: '
@@ -1333,7 +1383,9 @@ App.updateGUI = |:| do
 			local eq = earthquakes[vars.earthquakeIndex]
 
 			ig.igText('earthquake time = '..eq.time)
-			ig.igText('julian date = '..selQuakeJulianDate)
+			ig.igText('earthquake magn = '..eq.mag)	-- TODO just a side panel or pop up that shows all the earthquake stats
+			ig.igText('earthquake depth = '..eq.depth)	-- TODO incorporate this into the display somehow ...
+			ig.igText('earthquake julian day = '..selQuakeJulianDate)
 			ig.igText('earthquake place = '..eq.place)
 			ig.igText('# touching arcs = '..#eq.touchingCircles)
 			ig.igText('window start time = '..earthquakes[earthquakeWindowStartIndex].time)
@@ -1344,6 +1396,35 @@ App.updateGUI = |:| do
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -180, 180)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
 			ig.luatableSliderFloat('roll0', vars, 'roll0', -180, 180)
+			
+			ig.igEndMenu()
+		end
+		if ig.igBeginMenu'circles:' then
+			
+			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
+				self:recalcAllCircles()
+			end
+			if inputText('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
+				self:recalcAllCircles()
+			end
+			if inputText('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
+				self:recalcAllCircles()
+			end
+			if inputText('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
+				self:recalcAllCircles()
+			end
+			if inputText('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
+				self:recalcAllCircles()
+			end
+			if inputText('timeWindowInDays', calcCircles, 'timeWindowInDays') then
+				recalculateOldestEarthquakeIndex()
+				self:recalcAllCircles()
+			end
+			
+			ig.igEndMenu()
+		end
+		if ig.igBeginMenu'chart:' then
+
 			ig.luatableCheckbox('normalize weights', vars, 'normalizeWeights')
 			local changed
 			for _,field in ipairs(weightFields) do
@@ -1368,29 +1449,6 @@ App.updateGUI = |:| do
 						end
 					end
 				end
-			end
-
-			ig.igEndMenu()
-		end
-		if ig.igBeginMenu'circles:' then
-			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
-				self:recalcAllCircles()
-			end
-			if inputText('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
-				self:recalcAllCircles()
-			end
-			if inputText('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
-				self:recalcAllCircles()
-			end
-			if inputText('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
-				self:recalcAllCircles()
-			end
-			if inputText('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
-				self:recalcAllCircles()
-			end
-			if inputText('timeWindowInDays', calcCircles, 'timeWindowInDays') then
-				recalculateOldestEarthquakeIndex()
-				self:recalcAllCircles()
 			end
 
 			ig.igEndMenu()

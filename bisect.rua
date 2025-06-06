@@ -1,0 +1,42 @@
+--[[
+bisect search a table for the first occurrence of a sequential condition.
+searches for the point at which the condition stops being true.
+ex: bisect(range(10), |x| x >= 5) should give us 5 after log2(5) steps
+--]]
+local bisect = |t, cond, start, finish| do
+	start ??= 1
+	finish ??= #t
+	if cond(t[start]) then return start end	-- T T ... always hit .. return start
+	if not cond(t[finish]) then return end	-- F F ... never hit ... return nil
+	-- now we have [F, T], i.e. cond[start] = F, cond[finish] = T
+	while true do
+		local mid = (start + finish) >> 1	-- round up?
+		if mid == start or mid == finish then		-- [F, T] neighboring, pick the T
+			assert(start == finish or start + 1 == finish)	-- will it always be start+1 == finish?
+			return finish
+		end
+		 if cond(t[mid]) then	-- [F, T, T]
+		 	finish = mid
+		 else					-- [F, F, T]
+		 	start = mid
+		 end
+		 -- back to [F, T]
+	end
+end
+
+local bisectrev = |t, cond, start, finish| do
+	local n = #t
+	start ??= 1
+	finish ??= n
+	return 1 + n - bisect(
+		table.reverse(t),
+		|o| not cond(o),
+		1 + n - finish,
+		1 + n - start
+	)
+end
+
+return {
+	bisect = bisect,
+	bisectrev = bisectrev,
+}
