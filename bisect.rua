@@ -28,12 +28,12 @@ local bisectrev = |t, cond, start, finish| do
 	local n = #t
 	start ??= 1
 	finish ??= n
-	return 1 + n - bisect(
+	return 1 + n - (bisect(
 		table.reverse(t),
-		|o| not cond(o),
+		cond,
 		1 + n - finish,
 		1 + n - start
-	)
+	) or n)
 end
 
 return {

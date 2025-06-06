@@ -132,6 +132,7 @@ M.calcCircles=|earthquakes|do
 			local windowEnd = eq.ostime + M.timeWindowInDays * dayInSec
 			
 			-- find first/last earthquake index in this window
+			-- [=[
 			local earthquakeWindowIndexStart = i
 			for j=i-1,1,-1 do
 				if earthquakes[j].ostime < windowStart then break end
@@ -142,9 +143,12 @@ M.calcCircles=|earthquakes|do
 				if earthquakes[j].ostime > windowEnd then break end
 				earthquakeWindowIndexEnd = j
 			end
+			--]=]
 			--[=[ find it faster using bisect method?
-			local earthquakeWindowIndexStart = bisectrev(earthquakes, |e| windowStart < e.ostime, 1, i)
-			local earthquakeWindowIndexEnd = bisect(earthquakes, |e| e.ostime < windowEnd, i)
+			local earthquakeWindowIndexStart2 = bisectrev(earthquakes, |e| windowStart < e.ostime, 1, i)
+			local earthquakeWindowIndexEnd2 = bisect(earthquakes, |e| e.ostime < windowEnd, i)
+			assert.eq(earthquakeWindowIndexStart, earthquakeWindowIndexStart2)
+			assert.eq(earthquakeWindowIndexEnd, earthquakeWindowIndexEnd2)
 			--]=]
 
 			local circlesInTimeWindow = {}

@@ -47,8 +47,8 @@ local COMPUTE_TIDES = true
 local intptr = ffi.new'int[1]'
 local int = |x| do intptr[0] = x return intptr end
 
-local floatptr = ffi.new'float[1]'
-local float = |x| do floatptr[0] = x return floatptr end
+local doubleptr = ffi.new'double[1]'
+local double = |x| do doubleptr[0] = x return doubleptr end
 
 for _,name in ipairs(chartCNames) do
 	chartCode ..= '\nuniform float weight_'..name..';'
@@ -195,10 +195,10 @@ local vars = table(
 		lineWidth = 1,
 		angleFade = 1,
 		forceTexAlpha = .5,
-		calcHorzTides = true,
-		calcVertTides = true,
+		calcVertTides = false,
+		calcHorzTides = false,
+		calcVertGrav = false,
 		calcHorzGrav = true,
-		calcVertGrav = true,
 		drawPlanets = planetClasses:mapi(|c|(
 			c.name == 'sun' or c.name == 'moon',
 			c.name
@@ -313,7 +313,7 @@ App.initGL = |:| do
 		--t = gl.GL_CLAMP_TO_EDGE,
 		t = gl.GL_CLAMP_TO_BORDER,
 	}
-	
+
 	self.globeObj = GLSceneObject{
 		program = {
 			version = 'latest',
@@ -912,7 +912,8 @@ real4 calcGravityAccel(
 	real4 posOnEarth, 			//relative to earth, in meters
 	real4 planetPosRelEarth 	//relative to earth, in meters, w = mass in kg
 ) {
-	real4 const x = (real4)((posOnEarth - planetPosRelEarth).xyz, 0.);
+	real4 x = posOnEarth - planetPosRelEarth;
+	x.w = 0.;
 	real const r = length(x);
 	real const planetMass = planetPosRelEarth.w;
 	return x * (-planetMass * gravitationalConstant / (r * r * r));
@@ -924,7 +925,8 @@ real4 calcTidalAccel(
 	real4 normal,
 	real4 planetPosRelEarth
 ) {
-	real4 const x = (real4)((posOnEarth - planetPosRelEarth).xyz, 0.);
+	real4 x = posOnEarth - planetPosRelEarth;
+	x.w = 0.;
 	real const r = length(x);
 	real const r2 = r * r;
 	real const r3 = r * r2;
@@ -942,19 +944,22 @@ kernel void calcTideAndGrav(
 	// index, x = longitude = east/west, y = latitude = north/south
 
 	// lat lon, x = latitude = north/south, longitude = left/right
-	real2 latlon = (real2)(
+	real4 latlon = (real4)(
 		(real)((i.y + .5) / <?=clnumber(clsize[2])?>) * 180. - 90.,
-		(real)((i.x + .5) / <?=clnumber(clsize[1])?>) * 360. - 180.
+		(real)((i.x + .5) / <?=clnumber(clsize[1])?>) * 360. - 180.,
+		0.,
+		0.
 	);
 
-	real4 posOnEarth = chart_WGS84((real4)(latlon, 0., 0.));
+	real4 posOnEarth = chart_WGS84(latlon);
 	real4 normal = normalize(posOnEarth);
-	real4 accel = (real4)(0., 0., 0., 0.);
 
-	for (int j = 0; j < <?=#Planets.planetClasses?>; ++j) {
+	real4 accel = (real4)(0., 0., 0., 0.);
+	//for (int j = 0; j < <?=#Planets.planetClasses?>; ++j) {
+	for (int j = <?=Planets.indexes.earth-1?>; j <= <?=Planets.indexes.earth-1?>; ++j) {
 		if (component & 3) {
 			real4 tideAccel = calcTidalAccel(posOnEarth, normal, planetPosRelEarth[j]);
-			if (component & 3 == 3) {
+			if ((component & 3) == 3) {
 				accel += tideAccel;
 			} else {
 				real4 tideNormal = normal * dot(tideAccel, normal);
@@ -965,7 +970,7 @@ kernel void calcTideAndGrav(
 		}
 		if (component & 0xc) {
 			real4 gravAccel = calcGravityAccel(posOnEarth, planetPosRelEarth[j]);
-			if (component & 0xc == 0xc) {
+			if ((component & 0xc) == 0xc) {
 				accel += gravAccel;
 			} else {
 				real4 gravNormal = normal * dot(gravAccel, normal);
@@ -1002,6 +1007,7 @@ kernel void rescale(
 	self.forceBuffer = self.env:buffer{name='forceBuffer', type='real'}
 
 	self.rescaleForceCPUBuf = vector('float', self.clvolume)
+assert.len(self.rescaleForceCPUBuf, self.clvolume)
 	self.rescaleForceBuffer = self.env:buffer{name='forceBuffer', type='float'}
 
 	self.reduceBuffer = self.env:buffer{name='reduceBuffer', type='real'}
@@ -1048,8 +1054,8 @@ kernel void rescale(
 	self.forceTex = GLTex2D{
 		width = self.clsize[1],
 		height = self.clsize[2],
-		minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
 		magFilter = gl.GL_LINEAR,
+		minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
 		wrap = texWrap,
 		internalFormat = info.internalFormat,
 		format = info.format,
@@ -1258,38 +1264,39 @@ App.updateEarthquakeIndex = |:| do
 	recalculateOldestEarthquakeIndex()
 	self:refreshRelevantCircles()	-- TODO don't recalc all circles, just recalc indexes used
 
-
 	self:refreshForceBuffer()
 end
 
 App.refreshForceBuffer = |:|do
+	print'refreshing force buffer'
 if COMPUTE_TIDES then
 	local earthPos = planets[Planets.indexes.earth].pos
 	for i,p in ipairs(Planets.planetClasses) do
 		local v = planets[i].pos - earthPos
-		local dst = self.planetPosRelEarthCPUBuf.v + (i-1)
-		dst.x = v.x
-		dst.y = v.y
-		dst.z = v.z
-		dst.w = planets[i].mass
+		local pos = self.planetPosRelEarthCPUBuf.v + (i-1)
+		pos.x = v.x
+		pos.y = v.y
+		pos.z = v.z
+		pos.w = planets[i].mass
 	end
 	self.planetPosRelEarthBuffer:fromCPU(self.planetPosRelEarthCPUBuf.v)
 
 	self.calcTideAndGravKernel.obj:setArg(2, int(0
-		| (vars.calcHorzTides and 1 or 0)
-		| (vars.calcVertTides and 2 or 0)
-		| (vars.calcHorzGrav and 4 or 0)
-		| (vars.calcVertGrav and 8 or 0)
+		| (vars.calcVertTides and 1 or 0)
+		| (vars.calcHorzTides and 2 or 0)
+		| (vars.calcVertGrav and 4 or 0)
+		| (vars.calcHorzGrav and 8 or 0)
 	))
 	self.calcTideAndGravKernel()
 	
 	self.forceMin = self.reduceMin(self.forceBuffer.obj)
 	self.forceMax = self.reduceMax(self.forceBuffer.obj)
 
-	self.rescaleKernel.obj:setArg(2, float(self.forceMin))
-	self.rescaleKernel.obj:setArg(3, float(self.forceMax))
+	self.rescaleKernel.obj:setArg(2, double(self.forceMin))
+	self.rescaleKernel.obj:setArg(3, double(self.forceMax))
 	self.rescaleKernel()
 
+	self.rescaleForceBuffer:toCPU(self.rescaleForceCPUBuf.v)
 	self.forceTex
 		:bind()
 		:subimage()
@@ -1339,13 +1346,25 @@ App.updateGUI = |:| do
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
 			inputText('angleFade', vars, 'angleFade')
-			
+
 			ig.igText'force calcs:'
 			ig.igSameLine()
-			ig.luatableCheckbox('calcHorzTides', vars, 'calcHorzTides')
-			ig.luatableCheckbox('calcVertTides', vars, 'calcVertTides')
-			ig.luatableCheckbox('calcHorzGrav', vars, 'calcHorzGrav')
-			ig.luatableCheckbox('calcVertGrav', vars, 'calcVertGrav')
+			if ig.luatableTooltipCheckbox('calcVertTides', vars, 'calcVertTides') then
+				self:refreshForceBuffer()
+			end
+			ig.igSameLine()
+			if ig.luatableTooltipCheckbox('calcHorzTides', vars, 'calcHorzTides') then
+				self:refreshForceBuffer()
+			end
+			ig.igSameLine()
+			if ig.luatableTooltipCheckbox('calcVertGrav', vars, 'calcVertGrav') then
+				self:refreshForceBuffer()
+			end
+			ig.igSameLine()
+			if ig.luatableTooltipCheckbox('calcHorzGrav', vars, 'calcHorzGrav') then
+				self:refreshForceBuffer()
+			end
+
 			ig.igText('force min='..self.forceMin..' max='..self.forceMax)
 			ig.luatableSliderFloat('forceTexAlpha', vars, 'forceTexAlpha', 0, 1)
 
@@ -1396,11 +1415,11 @@ App.updateGUI = |:| do
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -180, 180)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
 			ig.luatableSliderFloat('roll0', vars, 'roll0', -180, 180)
-			
+
 			ig.igEndMenu()
 		end
 		if ig.igBeginMenu'circles:' then
-			
+
 			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
 				self:recalcAllCircles()
 			end
@@ -1420,7 +1439,7 @@ App.updateGUI = |:| do
 				recalculateOldestEarthquakeIndex()
 				self:recalcAllCircles()
 			end
-			
+
 			ig.igEndMenu()
 		end
 		if ig.igBeginMenu'chart:' then
