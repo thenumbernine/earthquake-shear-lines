@@ -33,6 +33,8 @@ local checkTime = require 'earthquakes'.checkTime
 local earthquakes = require 'earthquakes'.earthquakes
 local checkDuration = 60*5	-- re-check every 5 mins
 
+local flares = require 'flares'
+
 local time = require 'time'.time
 local timegm = require 'time'.timegm
 local gmtime = require 'time'.gmtime

@@ -1,0 +1,70 @@
+local time = require 'time'.time
+local timegm = require 'time'.timegm
+local gmtime = require 'time'.gmtime
+
+-- TODO this should match with earthquakes.rua
+-- put it in its own file or something
+local prevDays = 31
+local checkTime = time()
+local dayInSec = 60 * 60 * 24
+local startTime = checkTime - prevDays * dayInSec
+
+local mustbenumber = |x| do
+	return tonumber(x) or error("failed to parse "..tostring(x))
+end
+
+local timestamp2000 = timegm{year=2000, month=1, day=1, hour=0, min=0, sec=0}
+
+local magkeys = table{'A', 'B', 'C', 'M', 'X'}
+local indexForFlareClass = magkeys:mapi(function(v,k) return k,v end):setmetatable(nil)
+local logIntensityForFlareClass = magkeys:mapi(function(className, classIndex) 
+	return classIndex-9, className
+end):setmetatable(nil)
+local totalFlareLevel = 1
+
+local flares = table()
+local p = path'../noaa_flares/nc_txt'
+for f in p:dir() do
+	if select(2, path(f):getext()) == 'txt' then
+		local y,m,d,ver = f.path:match'^dn_xrsf%-l2%-flsum_g16_d(%d%d%d%d)(%d%d)(%d%d)_v(%d%-%d%-%d)%.txt$'
+		if y then
+print('reading flares '..f)
+			y = mustbenumber(y)
+			m = mustbenumber(m)
+			d = mustbenumber(d)
+			local filetime = timegm{year=y, month=m, day=d}
+			if filetime >= startTime then
+				for l in p(f):lines() do
+					local w = l:split'%s+'
+					if w[3] == 'EVENT_PEAK' then
+						local secSince2000 = mustbenumber(w[4])
+						local timestamp = timestamp2000 + secSince2000
+						local date = gmtime(timestamp)
+						
+						local x = w[6]:sub(1,1)
+						local submagn = mustbenumber(w[6]:sub(2):match'^%d%.%d$')
+						local magn = logIntensityForFlareClass[x] + submagn
+
+						-- TODO sun direction at time of the flare, using eph406 and rotateFromSolarToEarthFrame
+
+						flares:insert{
+							avgflux = mustbenumber(w[1]),
+							bgflux = mustbenumber(w[5]),
+							integratedFlux = mustbenumber(w[7]),
+							magn = magn,
+							timestr = ('%04d-%02d-%0d2-%02d:%02d:%02d'):format(date.year, date.month, date.day, date.hour, date.min, date.sec),
+							ostime = timestamp,
+							date = date,
+						}
+					end
+				end
+			end
+		else
+			-- it might be those old yearly reports ... 2017 and older ... skipping those for now until I get the earthquake data from that time range
+		end
+	end
+end
+
+print('read '..#flares..' flares')
+
+return flares
