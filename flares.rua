@@ -67,10 +67,12 @@ assert.eq(ffi.typeof(flare.ostime), ffi.typeof'int64_t')
 							flare.integratedFlux = mustbenumber(w[7])
 
 							local planets = Planets.fromEphemeris(flare.julianDay, 406, '../solarsystem/eph/406')
+							for i,p in ipairs(planets) do
+								p.pos = rotateFromSolarToEarthFrame(p.pos, flare.julianDay)
+							end
 							flare.planets = planets
 							local earthPos = planets[Planets.indexes.earth].pos
 							local sunPos = planets[Planets.indexes.sun].pos - earthPos
-							sunPos = rotateFromSolarToEarthFrame(sunPos, flare.julianDay)
 							local latrad, lonrad = cartesianToLatLonWGS84((sunPos / WGS84.a):unpack())
 							flare.latitude, flare.longitude = math.deg(latrad), math.deg(lonrad)
 --DEBUG:print('lat lon mag', flare.latitude, flare.longitude, flare.magn)
