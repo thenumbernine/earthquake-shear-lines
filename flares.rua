@@ -53,7 +53,7 @@ timer('calc flares', ||do
 
 							local secSince2000 = mustbenumber(w[4])
 							flare.ostime = timestamp2000 + secSince2000
-	assert.eq(ffi.typeof(flare.ostime), ffi.typeof'int64_t')
+assert.eq(ffi.typeof(flare.ostime), ffi.typeof'int64_t')
 							flare.date = gmtime(flare.ostime)
 							flare.julianDay = Julian.fromCalendar(flare.date)
 							flare.time = ('%04d-%02d-%0d2T%02d:%02d:%02dZ'):format(flare.date.year, flare.date.month, flare.date.day, flare.date.hour, flare.date.min, flare.date.sec)
@@ -66,10 +66,10 @@ timer('calc flares', ||do
 
 							flare.integratedFlux = mustbenumber(w[7])
 
-							-- TODO all planets for flares and earthquakes?
-							local planetsAtFlare = Planets.fromEphemeris(flare.julianDay, 406, '../solarsystem/eph/406')
-							local earthPos = planetsAtFlare[Planets.indexes.earth].pos
-							local sunPos = planetsAtFlare[Planets.indexes.sun].pos - earthPos
+							local planets = Planets.fromEphemeris(flare.julianDay, 406, '../solarsystem/eph/406')
+							flare.planets = planets
+							local earthPos = planets[Planets.indexes.earth].pos
+							local sunPos = planets[Planets.indexes.sun].pos - earthPos
 							sunPos = rotateFromSolarToEarthFrame(sunPos, flare.julianDay)
 							local latrad, lonrad = cartesianToLatLonWGS84((sunPos / WGS84.a):unpack())
 							flare.latitude, flare.longitude = math.deg(latrad), math.deg(lonrad)

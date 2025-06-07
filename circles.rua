@@ -53,6 +53,10 @@ M.calcCircles=|earthquakes|do
 	-- calculate all geodesics subject to our criteria
 	local allCircles = table()
 	timer('calc circles', ||do
+		for _,eq in ipairs(earthquakes) do
+			eq.circles = {}
+		end
+
 		local oldestEarthquakeIndex = 1
 		for i,eq in ipairs(earthquakes) do
 			local v = eq.xyznorm

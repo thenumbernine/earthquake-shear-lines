@@ -7,3 +7,4 @@ TODO
 - click to select point and geodesic
 - calibrate julianDay calculator
 - should I just store all planet angles at all earthquake & flare times?
+- S.H. basis for calcs?  If I add GBP data, that's already in SH coefficients ...

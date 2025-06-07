@@ -9,6 +9,7 @@ what to track ...
 
 
 local Julian = require 'solarsystem.julian'
+local Planets = require 'solarsystem.planets'
 local time = require 'time'.time
 local timegm = require 'time'.timegm
 local gmtime = require 'time'.gmtime
@@ -102,9 +103,11 @@ timer('calc xyz', ||do
 		eq.ostime = timegm(eq.date)
 assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		eq.julianDay = Julian.fromCalendar(eq.date)
+		eq.planets = Planets.fromEphemeris(eq.julianDay, 406, '../solarsystem/eph/406')
+		-- tempting to rotate all these planets by rotateFromSolarToEarthFrame so I don't have to later
+
 		eq.xyz = latLonToXYZ(eq)
 		eq.xyznorm = eq.xyz:normalize()
-		eq.circles = {}	-- keys are a set of indexes of circles in allCircles that use this point for construction (i.e. it is exactly on)
 	end
 	earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
 	--[[
