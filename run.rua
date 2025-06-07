@@ -20,16 +20,10 @@ local Planets = require 'solarsystem.planets'
 local Julian = require 'solarsystem.julian'
 
 local basisFor = require 'basis'.basisFor
-local rotateX = require 'basis'.rotateX
-local rotateY = require 'basis'.rotateY
-local rotateZ = require 'basis'.rotateZ
 
 local charts = require 'charts'.charts
 local chartCode = require 'charts'.chartCode
 local chartCNames = require 'charts'.chartCNames
-local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
--- TODO this is only used for rescaling cartesianToLatLonWGS84 back to meters so... maybe do it in meters?
-local WGS84 = require 'charts'.charts.WGS84
 
 local getDayCache = require 'earthquakes'.getDayCache
 local checkTime = require 'earthquakes'.checkTime
@@ -42,6 +36,7 @@ local time = require 'time'.time
 local timegm = require 'time'.timegm
 local gmtime = require 'time'.gmtime
 local dayInSec = require 'time'.dayInSec
+local rotateFromSolarToEarthFrame = require 'time'.rotateFromSolarToEarthFrame
 
 local calcCircles = require 'circles'
 
@@ -216,7 +211,7 @@ local vars = table(
 		lineWidth = 1,
 		angleFade = 1,
 		drawFlares = true,
-		flarePointSize = .05,
+		flarePointSize = .005,
 		forceTexAlpha = .5,
 		calcVertTides = false,
 		calcHorzTides = false,
@@ -233,18 +228,6 @@ local vars = table(
 			c.name
 		)),	-- calcPlanets[name] = true
 		drawPlanetAngles = drawPlanetAngles:mapi(|x|(true,x)),
-		-- trying to fine-tune this one, wonder why I have to ...
-		-- is my julian date calculator off?
---[[
-UTC time                    my julian day #  juliandate.org's julian-day-#  = timeanddate.com's (but they don't use hours etc / fractions)
-2025-06-04 13:22:35.790 = 2460831.0573587   = 2460830.72361                 = 25155
-... difference = 0.33350199973211
-2025-05-04 00:00:14.865 = 2460799.500172    = 2460799.16667                 = 25124
-... difference = 0.33374869963154
-so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offset? is mine?
---]]
-		--julianBaseAngle = 148,	-- based on the quake at 2025-05-04-00:00:00
-		julianBaseAngle = 107,		-- based on the quake at 2025-06-04-13:22:00
 		--[=[ TODO
 		drawAxisTorques = true,
 		axisTorquePointSize = 3,
@@ -258,17 +241,7 @@ so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offse
 
 
 local planets	-- planet ephemeris at time of quake 'vars.earthquakeIndex'
-local rotateFromSolarToEarthFrame = |v, jday| do
-	v = rotateZ(v,
-		math.rad(vars.julianBaseAngle)
-		+ ((jday % 1) + .5) * -2 * math.pi * (
-			-- convert from sinodic day (24 hours = 360 degrees x ())
-			-- ... to sidereal day
-			1 / (1 - 1 / 365.25)
-		)
-	)
-	return v
-end
+
 
 
 local earthquakeWindowStartIndex
@@ -301,18 +274,6 @@ local recalculateOldestEarthquakeIndex = ||do
 		for i=flareWindowStartIndex,#flares do
 			if flares![i]!.ostime > windowEndTime then break end
 			flareWindowEndIndex = i
-		end
-		-- find where the sun was during this flare
-		for i=flareWindowStartIndex,flareWindowEndIndex do
-			local f = flares[i]
-			if not f.latitude then
-				local planetsAtFlare = Planets.fromEphemeris(f.julianDay, 406, '../solarsystem/eph/406')
-				local earthPos = planetsAtFlare[Planets.indexes.earth].pos
-				local sunPos = planetsAtFlare[Planets.indexes.sun].pos - earthPos
-				sunPos = rotateFromSolarToEarthFrame(sunPos, f.julianDay)
-				local latrad, lonrad = cartesianToLatLonWGS84((sunPos / WGS84.a):unpack())
-				f.latitude, f.longitude = math.deg(latrad), math.deg(lonrad)
-			end
 		end
 	end
 end
@@ -619,19 +580,20 @@ void main() {
 			fragmentCode = [[
 in vec2 texcoordv;
 flat in float deltaJDay;
+uniform float alpha;
 out vec4 fragColor;
 void main() {
 	float lenSq = dot(texcoordv, texcoordv);
 	if (lenSq > 1.) discard;
 	if (deltaJDay == 0.) {
-		fragColor = vec4(1., 1., 0., 1.);
+		fragColor = vec4(1., 1., 0., alpha);
 	} else if (deltaJDay < 0.) {
-		fragColor = vec4(1., 0., 0., 1.);
+		fragColor = vec4(1., 0., 0., alpha);
 	} else { 	// if (deltaJDay > 0.) {
-		fragColor = vec4(0., 1., 0., 1.);
+		fragColor = vec4(0., 1., 0., alpha);
 	}
 	if (lenSq > .9*.9) {
-		fragColor = vec4(0., 0., 0., 1.);
+		fragColor = vec4(0., 0., 0., alpha);
 	}
 }
 ]],
@@ -742,7 +704,7 @@ require 'vec-ffi.vec2i'	-- time
 				vertexCPU:emplace_back()[0]:set(
 					f.latitude,
 					f.longitude,
-					f.magn
+					f.magn + 9	-- log10 watts, so A-class flare = -8
 				)
 				texcoordCPU:emplace_back()[0]:set(
 					v[1] * 2 - 1,
@@ -1396,6 +1358,7 @@ App.update = |:| do
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.pointSize = vars.earthquakePointSize
+		sceneObj.uniforms.alpha = 1
 
 		local eq = earthquakes[vars.earthquakeIndex]
 		sceneObj.uniforms.hiliteTime = {
@@ -1414,6 +1377,8 @@ App.update = |:| do
 
 	if vars.drawFlares then
 		gl.glDepthFunc(gl.GL_LEQUAL)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glDepthMask(0)
 		local sceneObj = self.flaresLatLonPointObj
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
@@ -1422,6 +1387,7 @@ App.update = |:| do
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.pointSize = vars.flarePointSize
+		sceneObj.uniforms.alpha = .2
 
 		local eq = earthquakes[vars.earthquakeIndex]
 		sceneObj.uniforms.hiliteTime = {
@@ -1437,6 +1403,8 @@ App.update = |:| do
 		sceneObj:draw()
 		sceneObj.geometry.offset = nil
 		sceneObj.geometry.count = nil
+		gl.glDepthMask(1)
+		gl.glDisable(gl.GL_BLEND)
 		gl.glDepthFunc(gl.GL_LESS)
 	end
 
@@ -1559,7 +1527,7 @@ App.updateGUI = |:| do
 				self.view.orthoSize = self.viewOrthoSize
 				self.view.angle:set(0,0,0,1)
 				self.view.orbit:set(0,0,0)
-				self.view.pos:set(0, 0, self.viewDist)
+				self.view.pos:set(0,0,self.viewDist)
 			end
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
@@ -1621,7 +1589,7 @@ App.updateGUI = |:| do
 				ig.igSameLine()
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
 			end
-			inputText('julianBaseAngle', vars, 'julianBaseAngle')
+			inputText('julianBaseAngle', require 'time', 'julianBaseAngle')
 
 			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
 				self:refreshRelevantCircles()
@@ -1646,12 +1614,16 @@ App.updateGUI = |:| do
 			ig.igText('earthquake depth = '..eq.depth)	-- TODO incorporate this into the display somehow ...
 			ig.igText('earthquake julian day = '..eq.julianDay)
 			ig.igText('earthquake place = '..eq.place)
-			ig.igText('window start time = '..earthquakes[earthquakeWindowStartIndex].time)
-			ig.igText('window end time = '..earthquakes[earthquakeWindowEndIndex].time)
-			ig.igText('window start index = '..earthquakeWindowStartIndex)
-			ig.igText('window end index = '..earthquakeWindowEndIndex)
+			ig.igText('earthquake window start time = '..earthquakes[earthquakeWindowStartIndex].time)
+			ig.igText('earthquake window end time = '..earthquakes[earthquakeWindowEndIndex].time)
+			ig.igText('earthquake window start index = '..earthquakeWindowStartIndex)
+			ig.igText('earthquake window end index = '..earthquakeWindowEndIndex)
 			ig.igText('earthquakes in window = '..(earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1))
-			ig.igText('flares in window = '..(flareWindowEndIndex - flareWindowStartIndex + 1))
+			ig.igText('flares in window = '..(flareWindowEndIndex == 0 and 0 or (flareWindowEndIndex - flareWindowStartIndex + 1)))
+			ig.igText('flare window start time = '..flares[flareWindowStartIndex].time)
+			ig.igText('flare window end time = '..flares[flareWindowEndIndex].time)
+			ig.igText('flare window start index = '..flareWindowStartIndex)
+			ig.igText('flare window end index = '..flareWindowEndIndex)
 
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -180, 180)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
@@ -1738,9 +1710,16 @@ App.updateGUI = |:| do
 					vars.earthquakeIndex = i2
 					self:updateEarthquakeIndex()
 				end
+
+				ig.igSameLine()
+				ig.igText(math.deg(t.angleDeviationFromArc)..' degrees from arc')
+
 				ig.igPopID()
 			end
 
+			ig.igEndMenu()
+		end
+		if ig.igBeginMenu('place='..eq.place) then
 			ig.igEndMenu()
 		end
 		ig.igEndMainMenuBar()

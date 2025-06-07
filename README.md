@@ -5,3 +5,5 @@ TODO
 - when creating geodesics, filter out identical pairs to prevent those huge alpha stacking over high-quantity (low-magnitude) areas
 	- make this optional
 - click to select point and geodesic
+- calibrate julianDay calculator
+- should I just store all planet angles at all earthquake & flare times?

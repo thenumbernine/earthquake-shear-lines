@@ -1,13 +1,16 @@
 -- Lua os.time calls mktime, which converts Y m d H M S to timestamp... with your timezone baked in.
 -- 	timegm
 require 'ffi.req' 'c.time'
+local rotateZ = require 'basis'.rotateZ
 
-local dayInSec = 60 * 60 * 24
+local M = {}
+
+M.dayInSec = 60 * 60 * 24
 
 -- takes in a timestamp (your timezone? do timestamps consider timezone, or are they all UTC?)
 -- spits out UTC date info
 -- TODO add a first 'format' option that formats this... ?
-local timegm = |t|do
+M.timegm = |t|do
 	local ts = ffi.new'struct tm[1]'
 	ts[0].tm_year = (t.year or 1900) - 1900
 	ts[0].tm_mon = (t.month or 1) - 1
@@ -19,32 +22,50 @@ local timegm = |t|do
 	return ffi.C.timegm(ts)
 end
 
-local time = ||ffi.C.time(nil)
+M.time = ||ffi.C.time(nil)
 
 -- takes in UTC date info, spits out a timestamp
 -- pass it unix timestamp, or nil for the current time
 -- returns a date stucture with .year .month .day .hour .min .sec .isdst hopeully with the same range as Lua's os.date
-local gmtime
-do
+M.gmtime = |t|do
 	local tp = ffi.new'time_t[1]'
-	gmtime = |t|do
-		tp[0] = t or time()
-		local ts = ffi.C.gmtime(tp)
-		return {
-			year = ts[0].tm_year + 1900,
-			month = ts[0].tm_mon + 1,
-			day = ts[0].tm_mday,
-			hour = ts[0].tm_hour,
-			min = ts[0].tm_min,
-			sec = ts[0].tm_sec,
-			isdst = ts[0].tm_isdst ~= 0,
-		}
-	end
+	tp[0] = t or M.time()
+	local ts = ffi.C.gmtime(tp)
+	return {
+		year = ts[0].tm_year + 1900,
+		month = ts[0].tm_mon + 1,
+		day = ts[0].tm_mday,
+		hour = ts[0].tm_hour,
+		min = ts[0].tm_min,
+		sec = ts[0].tm_sec,
+		isdst = ts[0].tm_isdst ~= 0,
+	}
 end
 
-return {
-	time = time,
-	timegm = timegm,
-	gmtime = gmtime,
-	dayInSec = dayInSec,
-}
+-- trying to fine-tune this one, wonder why I have to ...
+-- is my julian date calculator off?
+--[[
+UTC time                    my julian day #  juliandate.org's julian-day-#  = timeanddate.com's (but they don't use hours etc / fractions)
+2025-06-04 13:22:35.790 = 2460831.0573587   = 2460830.72361                 = 25155
+... difference = 0.33350199973211
+2025-05-04 00:00:14.865 = 2460799.500172    = 2460799.16667                 = 25124
+... difference = 0.33374869963154
+so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offset? is mine?
+--]]
+--M.julianBaseAngle = 148,	-- based on the quake at 2025-05-04-00:00:00
+M.julianBaseAngle = 107		-- based on the quake at 2025-06-04-13:22:00
+
+-- where to put this ... here? charts? ... planets.rua?
+M.rotateFromSolarToEarthFrame = |v, jday| do
+	v = rotateZ(v,
+		math.rad(M.julianBaseAngle)
+		+ ((jday % 1) + .5) * -2 * math.pi * (
+			-- convert from sinodic day (24 hours = 360 degrees x ())
+			-- ... to sidereal day
+			1 / (1 - 1 / 365.25)
+		)
+	)
+	return v
+end
+
+return M

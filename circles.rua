@@ -162,7 +162,7 @@ M.calcCircles=|earthquakes|do
 			-- see how close it is to all other circles on file
 			local touchingCircles = table()
 			for ici,ci in ipairs(circlesInTimeWindow) do
-				local c = allCircles[ci]
+				local c = assert.index(allCircles, ci)
 
 				-- make sure that the points that formed this great-arc are far from this point
 				local tooCloseToArcGen
@@ -176,8 +176,8 @@ M.calcCircles=|earthquakes|do
 				if not tooCloseToArcGen then
 					-- if we were right on the plane then we would be right at 90' with the axis.
 					-- see how far the angle we make with the axis is from 90'
-					local angle = math.acos(c.axis:dot(v))
-					if math.abs(angle - .5 * math.pi) < math.rad(M.quakeAlignWithPreviousGeodesicAngleThreshold) then
+					local angleDeviationFromArc = math.acos(c.axis:dot(v)) - .5 * math.pi
+					if math.abs(angleDeviationFromArc) < math.rad(M.quakeAlignWithPreviousGeodesicAngleThreshold) then
 						-- if a previous great-arc was already associated with this point and it is close enough to the current great-arc then skip the current one (uniques only)
 						local dups
 						if (M.filterDuplicateTouchingArcsAngleThreshold or 0) > 0 then
@@ -193,7 +193,7 @@ M.calcCircles=|earthquakes|do
 						if not dups then
 							-- TODO take note (or even filter?) based on the angle distance between us and the prevoius points that it took to form this geodesic?
 							-- what if all new quakes happen to be along geodesics but >90' of old geodesic points? (or whatever our geodesic creation angle criteria is)
-							touchingCircles:insert{circle=ci, angle=angle}
+							touchingCircles:insert{circle=ci, angleDeviationFromArc=angleDeviationFromArc}
 						end
 					end
 				end

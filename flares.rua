@@ -1,8 +1,12 @@
 local Julian = require 'solarsystem.julian'
+local Planets = require 'solarsystem.planets'
 local time = require 'time'.time
 local timegm = require 'time'.timegm
 local gmtime = require 'time'.gmtime
 local dayInSec = require 'time'.dayInSec
+local rotateFromSolarToEarthFrame = require 'time'.rotateFromSolarToEarthFrame
+local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
+local WGS84 = require 'charts'.charts.WGS84
 
 -- TODO this should match with earthquakes.rua
 -- put it in its own file or something
@@ -19,55 +23,74 @@ assert.eq(ffi.typeof(timestamp2000), ffi.typeof'int64_t')
 
 local magkeys = table{'A', 'B', 'C', 'M', 'X'}
 local indexForFlareClass = magkeys:mapi(function(v,k) return k,v end):setmetatable(nil)
+-- A = 10^-8 watts, B = 10^-7, C = 10^-6, M = 10^-5, X = 10^-4
 local logIntensityForFlareClass = magkeys:mapi(function(className, classIndex)
 	return classIndex-9, className
 end):setmetatable(nil)
-local totalFlareLevel = 1
 
 local flares = table()
-local p = path'../noaa_flares/nc_txt'
-for f in p:dir() do
-	if select(2, path(f):getext()) == 'txt' then
-		local y,m,d,ver = f.path:match'^dn_xrsf%-l2%-flsum_g16_d(%d%d%d%d)(%d%d)(%d%d)_v(%d%-%d%-%d)%.txt$'
-		if y then
-			y = mustbenumber(y)
-			m = mustbenumber(m)
-			d = mustbenumber(d)
-			local filetime = timegm{year=y, month=m, day=d}
-			if filetime >= startTime then
-				for l in p(f):lines() do
-					local w = l:split'%s+'
-					if w[3] == 'EVENT_PEAK' then
-						local secSince2000 = mustbenumber(w[4])
-						local timestamp = timestamp2000 + secSince2000
-assert.eq(ffi.typeof(timestamp), ffi.typeof'int64_t')
-						local date = gmtime(timestamp)
+timer('calc flares', ||do
+	local p = path'../noaa_flares/nc_txt'
+	for f in p:dir() do
+		if select(2, path(f):getext()) == 'txt' then
+			local goes,y,m,d,ver = f.path:match'^dn_xrsf%-l2%-flsum_g(%d%d)_d(%d%d%d%d)(%d%d)(%d%d)_v(%d%-%d%-%d)%.txt$'
+			if y then
+				y = mustbenumber(y)
+				m = mustbenumber(m)
+				d = mustbenumber(d)
+				local filetime = timegm{year=y, month=m, day=d}
+				if filetime >= startTime then
+					for l in p(f):lines() do
+						local w = l:split'%s+'
+						if w[3] == 'EVENT_PEAK' then
+							local flare = {}
 
-						local magnClass = w[6]:sub(1,1)
-						local submagn = mustbenumber(w[6]:sub(2):match'^%d%.%d$')
-						local magn = logIntensityForFlareClass[magnClass] + submagn
+							-- for verifying times
+							flare.filename = f.path
+							flare.filenametime = timegm{year=y, month=m, day=d}
 
-						-- TODO sun direction at time of the flare, using eph406 and rotateFromSolarToEarthFrame
+							flare.avgflux = mustbenumber(w[1])
 
-						flares:insert{
-							avgflux = mustbenumber(w[1]),
-							bgflux = mustbenumber(w[5]),
-							integratedFlux = mustbenumber(w[7]),
-							magnClass = magnClass,
-							magn = magn,
-							timestr = ('%04d-%02d-%0d2-%02d:%02d:%02d'):format(date.year, date.month, date.day, date.hour, date.min, date.sec),
-							ostime = timestamp,
-							date = date,
-							julianDay = Julian.fromCalendar(date),
-						}
+							local secSince2000 = mustbenumber(w[4])
+							flare.ostime = timestamp2000 + secSince2000
+	assert.eq(ffi.typeof(flare.ostime), ffi.typeof'int64_t')
+							flare.date = gmtime(flare.ostime)
+							flare.julianDay = Julian.fromCalendar(flare.date)
+							flare.time = ('%04d-%02d-%0d2T%02d:%02d:%02dZ'):format(flare.date.year, flare.date.month, flare.date.day, flare.date.hour, flare.date.min, flare.date.sec)
+
+							flare.bgflux = mustbenumber(w[5])
+
+							flare.magnClass = w[6]:sub(1,1)
+							local submagn = mustbenumber(w[6]:sub(2):match'^%d%.%d$')
+							flare.magn = logIntensityForFlareClass[flare.magnClass] + submagn
+
+							flare.integratedFlux = mustbenumber(w[7])
+
+							-- TODO all planets for flares and earthquakes?
+							local planetsAtFlare = Planets.fromEphemeris(flare.julianDay, 406, '../solarsystem/eph/406')
+							local earthPos = planetsAtFlare[Planets.indexes.earth].pos
+							local sunPos = planetsAtFlare[Planets.indexes.sun].pos - earthPos
+							sunPos = rotateFromSolarToEarthFrame(sunPos, flare.julianDay)
+							local latrad, lonrad = cartesianToLatLonWGS84((sunPos / WGS84.a):unpack())
+							flare.latitude, flare.longitude = math.deg(latrad), math.deg(lonrad)
+--DEBUG:print('lat lon mag', flare.latitude, flare.longitude, flare.magn)
+
+							flares:insert(flare)
+						end
 					end
 				end
+			else
+				-- it might be those old yearly reports ... 2017 and older ... skipping those for now until I get the earthquake data from that time range
 			end
-		else
-			-- it might be those old yearly reports ... 2017 and older ... skipping those for now until I get the earthquake data from that time range
 		end
 	end
-end
+	flares:sort(|a,b| a.ostime < b.ostime)
+	--[[
+	for i,f in ipairs(flares) do
+		print('flare', i, 'ostime', f.ostime, 'time', f.time, 'filenametime', f.filenametime, 'filename', f.filename)
+	end
+	--]]
+end)
 
 print('read '..#flares..' flares')
 

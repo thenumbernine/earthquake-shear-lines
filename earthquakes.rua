@@ -107,6 +107,11 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		eq.circles = {}	-- keys are a set of indexes of circles in allCircles that use this point for construction (i.e. it is exactly on)
 	end
 	earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
+	--[[
+	for i,eq in ipairs(earthquakes) do
+		print('earthquake', i, 'ostime', eq.ostime, 'time', eq.time)
+	end
+	--]]
 end)
 
 return {
