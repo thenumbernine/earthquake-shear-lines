@@ -27,6 +27,9 @@ local rotateZ = require 'basis'.rotateZ
 local charts = require 'charts'.charts
 local chartCode = require 'charts'.chartCode
 local chartCNames = require 'charts'.chartCNames
+local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
+-- TODO this is only used for rescaling cartesianToLatLonWGS84 back to meters so... maybe do it in meters?
+local WGS84 = require 'charts'.charts.WGS84
 
 local getDayCache = require 'earthquakes'.getDayCache
 local checkTime = require 'earthquakes'.checkTime
@@ -38,11 +41,10 @@ local flares = require 'flares'
 local time = require 'time'.time
 local timegm = require 'time'.timegm
 local gmtime = require 'time'.gmtime
+local dayInSec = require 'time'.dayInSec
 
 local calcCircles = require 'circles'
 
-
-local dayInSec = 60 * 60 * 24
 
 local COMPUTE_TIDES = true
 
@@ -208,11 +210,13 @@ local vars = table(
 		normalizeWeights = true,
 		drawEarth = true,
 		drawEarthquakes = true,
-		pointSize = .005,		-- but make it proportional to size in view maybe? like USGS does?
+		earthquakePointSize = .005,		-- but make it proportional to size in view maybe? like USGS does?
 		drawGreatArcs = true,
 		greatArcAlpha = .1,
 		lineWidth = 1,
 		angleFade = 1,
+		drawFlares = true,
+		flarePointSize = .05,
 		forceTexAlpha = .5,
 		calcVertTides = false,
 		calcHorzTides = false,
@@ -253,11 +257,11 @@ so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offse
 ):setmetatable(nil)
 
 
-local selQuakeJulianDate, planets
-local rotateFromSolarToEarthFrame = |v| do
+local planets	-- planet ephemeris at time of quake 'vars.earthquakeIndex'
+local rotateFromSolarToEarthFrame = |v, jday| do
 	v = rotateZ(v,
 		math.rad(vars.julianBaseAngle)
-		+ ((selQuakeJulianDate % 1) + .5) * -2 * math.pi * (
+		+ ((jday % 1) + .5) * -2 * math.pi * (
 			-- convert from sinodic day (24 hours = 360 degrees x ())
 			-- ... to sidereal day
 			1 / (1 - 1 / 365.25)
@@ -297,6 +301,18 @@ local recalculateOldestEarthquakeIndex = ||do
 		for i=flareWindowStartIndex,#flares do
 			if flares![i]!.ostime > windowEndTime then break end
 			flareWindowEndIndex = i
+		end
+		-- find where the sun was during this flare
+		for i=flareWindowStartIndex,flareWindowEndIndex do
+			local f = flares[i]
+			if not f.latitude then
+				local planetsAtFlare = Planets.fromEphemeris(f.julianDay, 406, '../solarsystem/eph/406')
+				local earthPos = planetsAtFlare[Planets.indexes.earth].pos
+				local sunPos = planetsAtFlare[Planets.indexes.sun].pos - earthPos
+				sunPos = rotateFromSolarToEarthFrame(sunPos, f.julianDay)
+				local latrad, lonrad = cartesianToLatLonWGS84((sunPos / WGS84.a):unpack())
+				f.latitude, f.longitude = math.deg(latrad), math.deg(lonrad)
+			end
 		end
 	end
 end
@@ -525,35 +541,45 @@ void main() {
 
 
 	-- [=====[ BEGIN EARTHQUAKES
-	self.earthquakeLatLonPointObj = GLSceneObject{
-		program = {
+	self.latLonPointShader = GLProgram{
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
-layout(location=0) in vec3 vertex;
+layout(location=0) in vec3 vertex;	// lat, lon, mag
 layout(location=1) in vec2 texcoord;
+layout(location=2) in uvec2 time;	// lo/hi timestamp 32bit int
 out vec2 texcoordv;
-flat out float beforeOrAfterHiliteIndex;
+flat out float deltaJDay;
 
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
 uniform vec3 latlonroll0;
 uniform float pointSize;
-uniform uint hiliteIndex;
+uniform uvec2 hiliteTime;
 
 <?=chartCode?>
+
+// compare two uint64_t's
+int cmp(uvec2 a, uvec2 b) {
+	if (a.y < b.y) return -1;
+	if (a.y > b.y) return 1;
+	if (a.x < b.x) return -1;
+	if (a.x > b.x) return 1;
+	return 0;
+}
 
 void main() {
 	texcoordv = texcoord;
 
 	float alt = 1e+3;
-	if (gl_VertexID >= hiliteIndex * 6 && gl_VertexID < (hiliteIndex + 1) * 6) {
-		beforeOrAfterHiliteIndex = 0.;
+	int c = cmp(time, hiliteTime);
+	if (c < 0) {
+		deltaJDay = -1.;
+	} else if (c > 0) {
+		deltaJDay = 1.;
+	} else {
+		deltaJDay = 0.;
 		alt *= 2.;
-	} else if (gl_VertexID < hiliteIndex * 6) {
-		beforeOrAfterHiliteIndex = -1.;
-	} else {	// gl_VertexID >= (hiliteIndex + 1) * 6
-		beforeOrAfterHiliteIndex = 1.;
 	}
 
 	vec2 vtxofs = applyLatLonRoll0(vertex.xy);
@@ -592,16 +618,16 @@ void main() {
 			}),
 			fragmentCode = [[
 in vec2 texcoordv;
-flat in float beforeOrAfterHiliteIndex;
+flat in float deltaJDay;
 out vec4 fragColor;
 void main() {
 	float lenSq = dot(texcoordv, texcoordv);
 	if (lenSq > 1.) discard;
-	if (beforeOrAfterHiliteIndex == 0.) {
+	if (deltaJDay == 0.) {
 		fragColor = vec4(1., 1., 0., 1.);
-	} else if (beforeOrAfterHiliteIndex < 0.) {
+	} else if (deltaJDay < 0.) {
 		fragColor = vec4(1., 0., 0., 1.);
-	} else { 	// if (beforeOrAfterHiliteIndex > 0.) {
+	} else { 	// if (deltaJDay > 0.) {
 		fragColor = vec4(0., 1., 0., 1.);
 	}
 	if (lenSq > .9*.9) {
@@ -609,7 +635,19 @@ void main() {
 	}
 }
 ]],
-		},
+		}:useNone()
+	local quadVtxs = {
+		{0, 0},
+		{1, 0},
+		{0, 1},
+		{0, 1},
+		{1, 0},
+		{1, 1}
+	}
+
+require 'vec-ffi.vec2i'	-- time
+	self.earthquakeLatLonPointObj = GLSceneObject{
+		program = self.latLonPointShader,
 		geometry = {
 			mode = gl.GL_TRIANGLES,
 		},
@@ -624,35 +662,102 @@ void main() {
 					useVec = true,
 				},
 			},
+			time = {
+				buffer = {
+					dim = 2,
+					useVec = true,
+					ctype = 'vec2i_t',
+				},
+			},
 		},
 	}
-	-- TODO .useVec with .data ... atm it just overwrites .data
-
-	local quadVtxs = {
-		{0, 0},
-		{1, 0},
-		{0, 1},
-		{0, 1},
-		{1, 0},
-		{1, 1}
-	}
-	local vertexGPU = self.earthquakeLatLonPointObj.attrs.vertex.buffer
-	local texcoordGPU = self.earthquakeLatLonPointObj.attrs.texcoord.buffer
-	local vertexCPU = vertexGPU:beginUpdate()
-	local texcoordCPU = texcoordGPU:beginUpdate()
-	for i,eq in ipairs(earthquakes) do
-		-- latitude: S = negative, N = positive
-		-- longitude: W = negative, E = positive
---print(i, eq.latitude, eq.longitude)
-		for _,v in ipairs(quadVtxs) do
-			vertexCPU:emplace_back()[0]:set(eq.latitude, eq.longitude, eq.mag)
-			texcoordCPU:emplace_back()[0]:set(v[1] * 2 - 1, v[2] * 2 - 1)
+	do
+		local vertexGPU = self.earthquakeLatLonPointObj.attrs.vertex.buffer
+		local texcoordGPU = self.earthquakeLatLonPointObj.attrs.texcoord.buffer
+		local timeGPU = self.earthquakeLatLonPointObj.attrs.time.buffer
+		local vertexCPU = vertexGPU:beginUpdate()
+		local texcoordCPU = texcoordGPU:beginUpdate()
+		local timeCPU = timeGPU:beginUpdate()
+		for i,eq in ipairs(earthquakes) do
+			-- latitude: S = negative, N = positive
+			-- longitude: W = negative, E = positive
+			for _,v in ipairs(quadVtxs) do
+				vertexCPU:emplace_back()[0]:set(
+					eq.latitude,
+					eq.longitude,
+					eq.mag
+				)
+				texcoordCPU:emplace_back()[0]:set(
+					v[1] * 2 - 1,
+					v[2] * 2 - 1
+				)
+				local t = timeCPU:emplace_back()
+				t.x = tonumber(eq.ostime & 0xffffffffLL)
+				t.y = tonumber((eq.ostime >> 32) & 0xffffffffLL)
+			end
 		end
+		assert.eq(#vertexCPU, 6 * #earthquakes)
+		vertexGPU:endUpdate()
+		texcoordGPU:endUpdate()
+		timeGPU:endUpdate()
 	end
-	assert.eq(#vertexCPU, 6 * #earthquakes)
-	vertexGPU:endUpdate()
-	texcoordGPU:endUpdate()
-	--]=====] END EARTHQUAKES
+
+	-- TODO for this and earthquakeLatLonPointObj, use instances
+	self.flaresLatLonPointObj = GLSceneObject{
+		program = self.latLonPointShader,
+		geometry = {
+			mode = gl.GL_TRIANGLES,
+		},
+		vertexes = {
+			dim = 3,
+			useVec = true,
+		},
+		attrs = {
+			texcoord = {
+				buffer = {
+					dim = 2,
+					useVec = true,
+				},
+			},
+			time = {
+				buffer = {
+					dim = 2,
+					useVec = true,
+					ctype = 'vec2i_t',
+				},
+			},
+		},
+	}
+	do
+		local vertexGPU = self.flaresLatLonPointObj.attrs.vertex.buffer
+		local texcoordGPU = self.flaresLatLonPointObj.attrs.texcoord.buffer
+		local timeGPU = self.earthquakeLatLonPointObj.attrs.time.buffer
+		local vertexCPU = vertexGPU:beginUpdate()
+		local texcoordCPU = texcoordGPU:beginUpdate()
+		local timeCPU = timeGPU:beginUpdate()
+		for i,f in ipairs(flares) do
+			-- latitude: S = negative, N = positive
+			-- longitude: W = negative, E = positive
+			for _,v in ipairs(quadVtxs) do
+				vertexCPU:emplace_back()[0]:set(
+					f.latitude,
+					f.longitude,
+					f.magn
+				)
+				texcoordCPU:emplace_back()[0]:set(
+					v[1] * 2 - 1,
+					v[2] * 2 - 1
+				)
+				local t = timeCPU:emplace_back()
+				t.x = tonumber(f.ostime & 0xffffffffLL)
+				t.y = tonumber((f.ostime >> 32) & 0xffffffffLL)
+			end
+		end
+		assert.eq(#vertexCPU, 6 * #flares)
+		vertexGPU:endUpdate()
+		texcoordGPU:endUpdate()
+		timeGPU:endUpdate()
+	end
 
 	local numCircleDivs = 200
 	self.circlesObj = GLSceneObject{
@@ -1261,7 +1366,7 @@ App.update = |:| do
 						if vars.drawPlanetAngles[declAngle] then
 							local planetPos = planets[Planets.indexes[planetClass.name]].pos
 							local planetDir = (planetPos - earthPos):normalize()
-							planetDir = rotateFromSolarToEarthFrame(planetDir)	-- rotate by earth tilt and time of day
+							planetDir = rotateFromSolarToEarthFrame(planetDir, earthquakes[vars.earthquakeIndex].julianDay)	-- rotate by earth tilt and time of day
 							local axis2 = basisFor(planetDir)
 							local axis3 = planetDir:cross(axis2)
 							sceneObj.uniforms.declinationFromAxis = math.rad(declAngle)
@@ -1290,21 +1395,52 @@ App.update = |:| do
 		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-		sceneObj.uniforms.pointSize = vars.pointSize
-		sceneObj.uniforms.hiliteIndex = vars.earthquakeIndex - 1
+		sceneObj.uniforms.pointSize = vars.earthquakePointSize
+
+		local eq = earthquakes[vars.earthquakeIndex]
+		sceneObj.uniforms.hiliteTime = {
+			tonumber(eq.ostime & 0xffffffffLL),
+			tonumber((eq.ostime >> 32) & 0xffffffffLL)
+		}
 
 		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
 		sceneObj.geometry.offset = 6 * (earthquakeWindowStartIndex - 1)
 		sceneObj.geometry.count = 6 * (earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1)
-
 		sceneObj:draw()
-
 		sceneObj.geometry.offset = nil
 		sceneObj.geometry.count = nil
 		gl.glDepthFunc(gl.GL_LESS)
 	end
 
-	--[=[ TODO show torque axii
+	if vars.drawFlares then
+		gl.glDepthFunc(gl.GL_LEQUAL)
+		local sceneObj = self.flaresLatLonPointObj
+		for _,name in ipairs(weightFields) do
+			sceneObj.uniforms[name] = vars[name]
+		end
+		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
+		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		sceneObj.uniforms.pointSize = vars.flarePointSize
+
+		local eq = earthquakes[vars.earthquakeIndex]
+		sceneObj.uniforms.hiliteTime = {
+			tonumber(eq.ostime & 0xffffffffLL),
+			tonumber((eq.ostime >> 32) & 0xffffffffLL)
+		}
+
+		-- TODO also color the flares different or something
+
+		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
+		sceneObj.geometry.offset = 6 * (flareWindowStartIndex - 1)
+		sceneObj.geometry.count = 6 * (flareWindowEndIndex - flareWindowStartIndex + 1)
+		sceneObj:draw()
+		sceneObj.geometry.offset = nil
+		sceneObj.geometry.count = nil
+		gl.glDepthFunc(gl.GL_LESS)
+	end
+
+	--[=[ TODO show torque axii of circle geodesics
 	if vars.drawAxisTorques then
 		local sceneObj = self.pairCrossPointsObj
 		if #sceneObj.attrs.vertex.buffer.vec > 0 then
@@ -1340,8 +1476,7 @@ end
 App.updateEarthquakeIndex = |:| do
 	vars.earthquakeIndex = math.clamp(math.round(vars.earthquakeIndex), 1, #earthquakes)
 	local eq = earthquakes[vars.earthquakeIndex]
-	selQuakeJulianDate = Julian.fromCalendar(eq.date)
-	planets = Planets.fromEphemeris(selQuakeJulianDate, 406, '../solarsystem/eph/406')
+	planets = Planets.fromEphemeris(eq.julianDay, 406, '../solarsystem/eph/406')
 
 	-- TODO redo circle' touchingindexes to scan both + and - in time by 1 day
 	recalculateOldestEarthquakeIndex()
@@ -1356,7 +1491,7 @@ if COMPUTE_TIDES then
 	local earthPos = planets[Planets.indexes.earth].pos
 	for i,p in ipairs(planets) do
 		local v = planets[i].pos - earthPos
-		v = rotateFromSolarToEarthFrame(v)
+		v = rotateFromSolarToEarthFrame(v, earthquakes[vars.earthquakeIndex].julianDay)
 		local pos = self.planetPosRelEarthCPUBuf.v + (i-1)
 		pos.x = v.x
 		pos.y = v.y
@@ -1428,12 +1563,15 @@ App.updateGUI = |:| do
 			end
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
-			inputText('pointSize', vars, 'pointSize')
+			inputText('earthquakePointSize', vars, 'earthquakePointSize')
 
 			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
 			inputText('angleFade', vars, 'angleFade')
+
+			ig.luatableCheckbox('draw flares', vars, 'drawFlares')
+			inputText('flarePointSize', vars, 'flarePointSize')
 
 			ig.igText'force calcs:'
 			ig.igSameLine()
@@ -1506,7 +1644,7 @@ App.updateGUI = |:| do
 			ig.igText('earthquake time = '..eq.time)
 			ig.igText('earthquake magn = '..eq.mag)	-- TODO just a side panel or pop up that shows all the earthquake stats
 			ig.igText('earthquake depth = '..eq.depth)	-- TODO incorporate this into the display somehow ...
-			ig.igText('earthquake julian day = '..selQuakeJulianDate)
+			ig.igText('earthquake julian day = '..eq.julianDay)
 			ig.igText('earthquake place = '..eq.place)
 			ig.igText('window start time = '..earthquakes[earthquakeWindowStartIndex].time)
 			ig.igText('window end time = '..earthquakes[earthquakeWindowEndIndex].time)

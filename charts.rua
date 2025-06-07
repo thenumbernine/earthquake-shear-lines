@@ -1,5 +1,7 @@
--- [=======[ TODO cache calcs somehow
+-- TODO cache calcs somehow
+local vec3d = require 'vec-ffi.vec3d'
 local allCharts = require 'geographic-charts'
+
 local chartNames = table{	-- which charts we want to allow ...
 	'Equirectangular',
 	'Azimuthal equidistant',
@@ -19,10 +21,74 @@ end
 
 local chartCNames = charts:mapi(|chart| chart:getCName())
 local chartCode = require 'geographic-charts.code'(charts)
---]=======]
+
+
+local WGS84 = charts.WGS84
+local latLonToXYZ = |eq| do
+	return vec3d(
+		WGS84:chart(eq.latitude, eq.longitude, 0)
+	) / WGS84.a
+end
+
+-- ported from WMM2020 GeomagnetismLibrary.c
+-- expects xyz in cartesian units earth-semimajor-axis
+-- output is in (radians, radians, km)
+--
+-- TODO also in earth-magnetic-field/run.lua
+-- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
+-- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
+local cartesianToLatLonWGS84 = |x, y, z| do
+	x = x * WGS84.a
+	y = y * WGS84.a
+	z = z * WGS84.a
+
+	local modified_b = z < 0 and -WGS84.b or WGS84.b
+
+	local r = math.sqrt(x*x + y*y)
+
+	local e = ( modified_b*z - (WGS84.a*WGS84.a - modified_b*modified_b) ) / ( WGS84.a*r )
+	local f = ( modified_b*z + (WGS84.a*WGS84.a - modified_b*modified_b) ) / ( WGS84.a*r )
+	local p = (4 / 3) * (e*f + 1)
+	local q = 2 * (e*e - f*f)
+	local d = p*p*p + q*q
+
+	local v
+	if  d >= 0 then
+		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
+			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
+	else
+		v= 2 * math.sqrt( -p )
+			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
+	end
+
+	if v*v < math.abs(p)  then
+		v = -(v*v*v + 2*q) / (3*p)
+	end
+
+	local g = (math.sqrt( e*e + v ) + e) / 2
+	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
+
+	local rlat = math.atan( (WGS84.a*(1 - t*t)) / (2*modified_b*t) )
+	local phi = rlat
+
+	local height = (r - WGS84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
+	local zlong = math.atan2(y, x)
+	if  zlong < 0 then
+		zlong = zlong + 2*math.pi
+	end
+	local lambda = zlong
+	while lambda > math.pi do
+		lambda = lambda - 2 * math.pi
+	end
+	return phi, lambda, height * 1e+3		-- km back to m
+end
+
+
 
 return {
 	charts = charts,
-	chartCode = chartCode, 
+	chartCode = chartCode,
 	chartCNames = chartCNames,
+	latLonToXYZ = latLonToXYZ,
+	cartesianToLatLonWGS84 = cartesianToLatLonWGS84,
 }

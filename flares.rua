@@ -1,12 +1,13 @@
+local Julian = require 'solarsystem.julian'
 local time = require 'time'.time
 local timegm = require 'time'.timegm
 local gmtime = require 'time'.gmtime
+local dayInSec = require 'time'.dayInSec
 
 -- TODO this should match with earthquakes.rua
 -- put it in its own file or something
 local prevDays = 31
 local checkTime = time()
-local dayInSec = 60 * 60 * 24
 local startTime = checkTime - prevDays * dayInSec
 
 local mustbenumber = |x| do
@@ -14,10 +15,11 @@ local mustbenumber = |x| do
 end
 
 local timestamp2000 = timegm{year=2000, month=1, day=1, hour=0, min=0, sec=0}
+assert.eq(ffi.typeof(timestamp2000), ffi.typeof'int64_t')
 
 local magkeys = table{'A', 'B', 'C', 'M', 'X'}
 local indexForFlareClass = magkeys:mapi(function(v,k) return k,v end):setmetatable(nil)
-local logIntensityForFlareClass = magkeys:mapi(function(className, classIndex) 
+local logIntensityForFlareClass = magkeys:mapi(function(className, classIndex)
 	return classIndex-9, className
 end):setmetatable(nil)
 local totalFlareLevel = 1
@@ -38,8 +40,9 @@ for f in p:dir() do
 					if w[3] == 'EVENT_PEAK' then
 						local secSince2000 = mustbenumber(w[4])
 						local timestamp = timestamp2000 + secSince2000
+assert.eq(ffi.typeof(timestamp), ffi.typeof'int64_t')
 						local date = gmtime(timestamp)
-						
+
 						local magnClass = w[6]:sub(1,1)
 						local submagn = mustbenumber(w[6]:sub(2):match'^%d%.%d$')
 						local magn = logIntensityForFlareClass[magnClass] + submagn
@@ -55,6 +58,7 @@ for f in p:dir() do
 							timestr = ('%04d-%02d-%0d2-%02d:%02d:%02d'):format(date.year, date.month, date.day, date.hour, date.min, date.sec),
 							ostime = timestamp,
 							date = date,
+							julianDay = Julian.fromCalendar(date),
 						}
 					end
 				end

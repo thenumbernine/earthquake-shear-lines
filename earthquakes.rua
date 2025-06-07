@@ -4,16 +4,15 @@ what to track ...
 - as you add them, look through all previous points and consider the great-arc with this point (subject to angle constraints)
 - report how well this new great-arc compares to older ones (i.e. is this new earthquake on a great-arc that already exists?)
 	- by comparing dot of its axis with previous circles' axis
-- as we get too old, throw out old points and their respective great-arcs 
+- as we get too old, throw out old points and their respective great-arcs
 --]]
 
-local vec3d = require 'vec-ffi.vec3d'
 
-local dayInSec = 60 * 60 * 24
-
+local Julian = require 'solarsystem.julian'
 local time = require 'time'.time
 local timegm = require 'time'.timegm
 local gmtime = require 'time'.gmtime
+local dayInSec = require 'time'.dayInSec
 --[[
 print('time()', time())	-- this is time since 1970 ... your timezone ... right?
 print('gmtime', tolua(gmtime()))
@@ -33,7 +32,7 @@ local getDayCache = |t, force| do
 		print('downloading '..datestr..'...')
 		local https = require 'ssl.https'
 		csvstr = assert(https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'))
-	
+
 		if force then
 			if csvpath:exists() then
 				changed = assert(csvpath:read()) ~= csvstr
@@ -51,7 +50,7 @@ local getDayCache = |t, force| do
 	end
 	local csvdata = assert(require 'csv'.string(csvstr))
 	csvdata:setColumnNames(csvdata.rows:remove(1))
-	
+
 	-- map from csv index to k/v object
 	return csvdata.rows:mapi(|eq| do
 		local neq = {}
@@ -82,75 +81,11 @@ end
 print('total', #earthquakes)
 --]=======]
 
-
-
-local WGS84 = require 'charts'.charts.WGS84
-local latLonToXYZ = |eq| do
-	return vec3d(
-		WGS84:chart(eq.latitude, eq.longitude, 0)
-	) / WGS84.a
-end
-
---[=======[ BEGIN COPY FROM EARTH TRANSPORT NETWORK
--- ported from WMM2020 GeomagnetismLibrary.c
--- expects xyz in cartesian units earth-semimajor-axis
--- output is in (radians, radians, km)
---
--- TODO also in earth-magnetic-field/run.lua
--- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
--- but why is there a dif one in geographic-charts/geographic-charts.lua ' WGS84 chart?
-local cartesianToLatLonWGS84 = |x, y, z| do
-	x = x * WGS84.a
-	y = y * WGS84.a
-	z = z * WGS84.a
-
-	local modified_b = z < 0 and -WGS84.b or WGS84.b
-
-	local r = math.sqrt(x*x + y*y)
-
-	local e = ( modified_b*z - (WGS84.a*WGS84.a - modified_b*modified_b) ) / ( WGS84.a*r )
-	local f = ( modified_b*z + (WGS84.a*WGS84.a - modified_b*modified_b) ) / ( WGS84.a*r )
-	local p = (4 / 3) * (e*f + 1)
-	local q = 2 * (e*e - f*f)
-	local d = p*p*p + q*q
-
-	local v
-	if  d >= 0 then
-		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
-			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
-	else
-		v= 2 * math.sqrt( -p )
-			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
-	end
-
-	if v*v < math.abs(p)  then
-		v = -(v*v*v + 2*q) / (3*p)
-	end
-
-	local g = (math.sqrt( e*e + v ) + e) / 2
-	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
-
-	local rlat = math.atan( (WGS84.a*(1 - t*t)) / (2*modified_b*t) )
-	local phi = rlat
-
-	local height = (r - WGS84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
-	local zlong = math.atan2(y, x)
-	if  zlong < 0 then
-		zlong = zlong + 2*math.pi
-	end
-	local lambda = zlong
-	while lambda > math.pi do
-		lambda = lambda - 2 * math.pi
-	end
-	return phi, lambda, height * 1e+3		-- km back to m
-end
---]=======] -- END COPY FROM EARTH TRANSPORT NETWORK
-
-
+local latLonToXYZ = require 'charts'.latLonToXYZ
 
 timer('calc xyz', ||do
 	for _,eq in ipairs(earthquakes) do
-		-- add preprocessed fields	
+		-- add preprocessed fields
 		local Y,m,d,H,M,S = eq.time:match'^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d%.%d%d%d)Z$'
 		assert(Y)	-- ... and the others should be there too
 		local mustbenumber = |x| do
@@ -165,8 +100,10 @@ timer('calc xyz', ||do
 			sec = mustbenumber(S),
 		}
 		eq.ostime = timegm(eq.date)
+assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
+		eq.julianDay = Julian.fromCalendar(eq.date)
 		eq.xyz = latLonToXYZ(eq)
-		eq.xyznorm = vec3d(eq.xyz:unpack()):normalize()
+		eq.xyznorm = eq.xyz:normalize()
 		eq.circles = {}	-- keys are a set of indexes of circles in allCircles that use this point for construction (i.e. it is exactly on)
 	end
 	earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first

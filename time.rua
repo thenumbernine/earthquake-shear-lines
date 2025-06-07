@@ -2,6 +2,8 @@
 -- 	timegm
 require 'ffi.req' 'c.time'
 
+local dayInSec = 60 * 60 * 24
+
 -- takes in a timestamp (your timezone? do timestamps consider timezone, or are they all UTC?)
 -- spits out UTC date info
 -- TODO add a first 'format' option that formats this... ?
@@ -17,7 +19,7 @@ local timegm = |t|do
 	return ffi.C.timegm(ts)
 end
 
-local time = ||ffi.C.time(nil) 
+local time = ||ffi.C.time(nil)
 
 -- takes in UTC date info, spits out a timestamp
 -- pass it unix timestamp, or nil for the current time
@@ -44,4 +46,5 @@ return {
 	time = time,
 	timegm = timegm,
 	gmtime = gmtime,
+	dayInSec = dayInSec,
 }

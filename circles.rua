@@ -1,10 +1,9 @@
 local vec3d = require 'vec-ffi.vec3d'
 local bisect = require 'bisect'.bisect
 local bisectrev = require 'bisect'.bisectrev
+local dayInSec = require 'time'.dayInSec
 
 local M = {}
-
-local dayInSec = 60 * 60 * 24
 
 
 -- when searching for great-arc circles to create.
@@ -47,7 +46,7 @@ M.quakeAlignWithPreviousGeodesicAngleThreshold = .1		-- in degrees ... even sear
 --M.timeWindowInDays = 1
 M.timeWindowInDays = 3
 
-local basisFor = require 'basis'.basisFor 
+local basisFor = require 'basis'.basisFor
 
 M.calcCircles=|earthquakes|do
 
@@ -108,7 +107,7 @@ M.calcCircles=|earthquakes|do
 					end
 				end
 			end
-		
+
 			-- now recalculate the oldest point index t consider (basd on our time window)
 			while oldestEarthquakeIndex < i
 			and eq.ostime - earthquakes[oldestEarthquakeIndex].ostime > M.timeWindowInDays * dayInSec
@@ -130,7 +129,7 @@ M.calcCircles=|earthquakes|do
 			-- now recalculate the oldest point index t consider (basd on our time window)
 			local windowStart = eq.ostime - M.timeWindowInDays * dayInSec
 			local windowEnd = eq.ostime + M.timeWindowInDays * dayInSec
-			
+
 			-- find first/last earthquake index in this window
 			-- [=[
 			local earthquakeWindowIndexStart = i
@@ -164,9 +163,9 @@ M.calcCircles=|earthquakes|do
 			local touchingCircles = table()
 			for ici,ci in ipairs(circlesInTimeWindow) do
 				local c = allCircles[ci]
-				
+
 				-- make sure that the points that formed this great-arc are far from this point
-				local tooCloseToArcGen 
+				local tooCloseToArcGen
 				for k,ei in ipairs(c.indexes) do
 					local cosAngle = earthquakes[ei].xyznorm:dot(v)
 					if cosAngle > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
@@ -200,7 +199,7 @@ M.calcCircles=|earthquakes|do
 				end
 			end
 			eq.touchingCircles = touchingCircles
-			
+
 			--[=[ collect unique points to all circles of this point
 			local uniquePointIndexes = {}
 			uniquePointIndexes[i] = true
