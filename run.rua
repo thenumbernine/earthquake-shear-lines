@@ -2,6 +2,7 @@
 local template = require 'template'
 local sdl = require 'sdl'
 local gl = require 'gl'
+local Image = require 'image'
 local GLSceneObject = require 'gl.sceneobject'
 local GLArrayBuffer = require 'gl.arraybuffer'
 local GLProgram = require 'gl.program'
@@ -39,8 +40,6 @@ local dayInSec = require 'time'.dayInSec
 
 local calcCircles = require 'circles'
 
-
-local COMPUTE_TIDES = true
 
 local intptr = ffi.new'int[1]'
 local int = |x| do intptr[0] = x return intptr end
@@ -247,6 +246,9 @@ local vars = table(
 		flarePointSize = .005,
 		forceTexAlpha = .5,
 
+		showDrapTex = false,		-- keep it off by default for now ... it works but it adds too many moving pieces
+		drapTexAlpha = .5,
+
 		calcTidesVert = false,
 		calcTidesHorz = false,
 		calcGravVert = true,
@@ -336,6 +338,12 @@ App.recalcAllCircles=|:|do
 	self:refreshRelevantCircles()	-- TODO don't recalc all circles, just recalc indexes used
 end
 
+local texWrap = {
+	s = gl.GL_REPEAT,
+	--t = gl.GL_CLAMP_TO_EDGE,
+	t = gl.GL_CLAMP_TO_BORDER,
+}
+
 App.initGL = |:| do
 	App.super.initGL(self)
 	self.view.ortho = true
@@ -376,12 +384,6 @@ App.initGL = |:| do
 			vertexes = self.vertexBuf,
 		})
 	end
-
-	local texWrap = {
-		s = gl.GL_REPEAT,
-		--t = gl.GL_CLAMP_TO_EDGE,
-		t = gl.GL_CLAMP_TO_BORDER,
-	}
 
 	self.globeObj = GLSceneObject{
 		program = {
@@ -492,18 +494,28 @@ in vec2 texcoordg;
 out vec4 fragColor;
 
 uniform sampler2D earthTex;
-uniform sampler2D forceTex;
-uniform sampler2D gradientTex;
 
-uniform float alpha;
+uniform sampler2D gradientTex;
+uniform sampler2D forceTex;
 uniform float forceTexAlpha;
+
+uniform sampler2D drapTex;
+uniform float drapTexAlpha;
+
+uniform float alpha;	// final alpha
 
 void main() {
 	vec2 uv = vec2(texcoordg.x, 1. - texcoordg.y);
 	fragColor = texture(earthTex, uv);
+
 	float force = texture(forceTex, uv).r;
 	vec4 forceColor = texture(gradientTex, vec2(force, .5));
 	fragColor = mix(fragColor, forceColor, forceTexAlpha);
+
+	// might have to rescale the uv here ...
+	vec4 drapColor = texture(drapTex, uv);
+	fragColor = mix(fragColor, drapColor, drapTexAlpha);
+
 	fragColor.a = alpha;
 }
 ]],
@@ -511,7 +523,10 @@ void main() {
 				earthTex = 0,
 				forceTex = 1,
 				gradientTex = 2,
+				drapTex = 3,
 				alpha = .5,
+				forceTexAlpha = .5,
+				drapTexAlpha = .5,
 			},
 		},
 		vertexes = self.vertexBuf,
@@ -988,7 +1003,6 @@ void main() {
 
 
 
-if COMPUTE_TIDES then
 	-- while we're here, let's compute the tidal and gravitational forces of our planets ...
 	-- TODO take it from my solarsystem project where I'm already doing this
 	-- but compute shader? does GL support double buffers? I don't think so . . .
@@ -1433,7 +1447,7 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 		type = info.types[1],
 		data = self.rescaleForceCPUBuf.v,
 	}:unbind()
-	self.globeObj.texs:insert(self.forceTex)
+	self.globeObj.texs[2] = self.forceTex
 	self.gradientTex = GLGradientTex2D(
 		256,
 --[[ rainbow
@@ -1463,8 +1477,7 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 		end)
 --]]
 	):unbind()
-	self.globeObj.texs:insert(self.gradientTex)
-end -- COMPUTE_TIDES
+	self.globeObj.texs[3] = self.gradientTex
 
 	recalculateOldestEarthquakeIndex()
 	self:recalcAllCircles()
@@ -1493,13 +1506,94 @@ App.refreshRelevantCircles = |:| do
 	end
 end
 
+local drapPath = path'goes_drap'
+drapPath:mkdir()
+local nextDrapCheckTime = timer.getTime() - 1
 App.update = |:| do
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
-	local eq = earthquakes[vars.earthquakeIndex]
+	local eq = earthquakes![vars.earthquakeIndex]
+
+	-- while we're here, try to remotely download & cache the DRAP image
+	-- https://services.swpc.noaa.gov/images/animations/d-rap/global/d-rap/SWX_DRAP20_C_SWPC_20250607030500_GLOBAL.png
+	local eq = earthquakes![vars.earthquakeIndex]
+	-- check every frame or will that slow us down?
+	if vars.showDrapTex
+	and timer.getTime() > nextDrapCheckTime
+	then
+		nextDrapCheckTime = timer.getTime() + 1
+--DEBUG:print('checking eq.drapTex', type(eq.drapTex), eq.drapTex)
+		if type(eq.drapTex) == 'table' then
+--DEBUG:print('...has texture')
+		else
+			local cacheName = ('%04d-%02d-%02d_%02d:%02d:%02d'):format(
+				eq.date.year, eq.date.month, eq.date.day, eq.date.hour, eq.date.min, eq.date.sec)
+			local p = drapPath/(cacheName..'.png')
+
+			if p:exists() then
+print(cacheName..' exists...')
+print("our current state:", eq.drapTex)
+				if eq.drapTex == 'loading' then
+print('loading, checking pid for finished...')
+					local done = not os.exec('kill -0 '..eq.drapTexWGetPID..' > /dev/null 2>&1')	-- ... or wget request and pid kill -0 test errors aka the pid is done
+print('kill -0 failed, i.e. done?', done)
+					if done then
+						eq.drapTex = 'done'	-- finished loading
+					end
+				end
+
+				if eq.drapTex == nil		-- if we never loaded i.e. chcking cache ...
+				or eq.drapTex == 'done'		-- or if we just finished loading ...
+				then
+print('pid is done, checking file size...')
+					-- then the process must have ended ...
+					if p:attr().size == 0 then
+print('file size is zero - error?')
+						-- then something went wrong (also we could test for process exit code but then you'd have to write that somewhere upon exit ...)
+						eq.drapTex = 'failed'
+					else
+print('file size is valid, done?')
+					end
+				end
+
+				if eq.drapTex == nil		-- file exists and no loading was done
+				or eq.drapTex == 'done' 	-- loading is finished
+				then
+				-- TODO not here, but wait until the wget pid finishes ....
+--DEBUG:print("...exists, loading")
+					eq.drapTex = GLTex2D{
+						image = Image(p.path)
+							:copy{x=12, y=9, width=689-12, height=338-9}
+							:rgba(),
+						magFilter = gl.GL_LINEAR,
+						minFilter = gl.GL_NEAREST,
+						wrap = texWrap,
+					}:unbind()
+				end
+			else
+print(cacheName.." doesn't exist...")
+			end
+
+			if eq.drapTex == nil then	-- didn't load but havne't tried to load ... then try to load
+print("...hasn't been dl'd, dl'ing...")
+				eq.drapTex = 'loading'	-- don't load twice
+				local fn = ('%04d%02d%02d%02d%02d00'):format(
+					eq.date.year, eq.date.month, eq.date.day, eq.date.hour, eq.date.min)
+				os.exec('wget https://services.swpc.noaa.gov/images/animations/d-rap/global/d-rap/SWX_DRAP20_C_SWPC_'..fn..'_GLOBAL.png -O '..p..' & echo $! > pid')
+				eq.drapTexWGetPID = path'pid':read():trim()
+				path'pid':remove()
+			-- else it should be 'loading' or 'failed'
+			end
+		end
+	end
 
 	if vars.drawEarth then
 		local sceneObj = self.globeObj
+		if type(eq.drapTex) == 'table' then
+			sceneObj.texs[4] = eq.drapTex
+		else
+			sceneObj.texs[4] = nil
+		end
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
@@ -1507,6 +1601,7 @@ App.update = |:| do
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.forceTexAlpha = vars.forceTexAlpha
+		sceneObj.uniforms.drapTexAlpha = vars.showDrapTex and vars.drapTexAlpha or 0
 		sceneObj:draw()
 	end
 
@@ -1674,13 +1769,11 @@ App.updateEarthquakeIndex = |:| do
 	-- TODO redo circle' touchingindexes to scan both + and - in time by 1 day
 	recalculateOldestEarthquakeIndex()
 	self:refreshRelevantCircles()	-- TODO don't recalc all circles, just recalc indexes used
-
 	self:refreshForceBuffer()
 end
 
 App.refreshForceBuffer = |:|do
 --DEBUG:print'refreshing force buffer'
-if COMPUTE_TIDES then
 	local eq = earthquakes![vars.earthquakeIndex]
 	local earthPos = eq.planets[Planets.indexes.earth].pos
 	for i,p in ipairs(eq.planets) do
@@ -1720,7 +1813,6 @@ if COMPUTE_TIDES then
 		:subimage()
 		:generateMipmap()
 		:unbind()
-end -- COMPUTE_TIDES
 end
 
 App.event = |:,e| do
@@ -1829,6 +1921,9 @@ App.updateGUI = |:| do
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
 			end
 			inputText('julianBaseAngle', require 'time', 'julianBaseAngle')
+
+			ig.luatableCheckbox('showDrapTex', vars, 'showDrapTex')
+			ig.luatableSliderFloat('drapTexAlpha', vars, 'drapTexAlpha', 0, 1)
 
 			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
 				self:refreshRelevantCircles()
@@ -1963,11 +2058,12 @@ App.updateGUI = |:| do
 			local earthPos = eq.planets[Planets.indexes.earth].pos
 			for _,cl in ipairs(drawPlanetClasses) do	-- planets without earth (nan angle) and EM_Bary (same angle as moon)
 				local planet = eq.planets[Planets.indexes[cl.name]]
-				ig.igText(planet.name..' angle '..math.deg(math.acos(
-					eq.xyznorm:dot(
-						(planet.pos - earthPos):normalize()
-					)
-				))..'°')
+				local planetDir = (planet.pos - earthPos):normalize()
+				ig.igText(planet.name..' 3D angle '..math.deg(math.acos(
+					eq.xyznorm:dot(planetDir)
+				))..'°, 2D angle '..math.deg(
+					((math.atan2(planetDir.y, planetDir.x) - math.atan2(eq.xyznorm.y, eq.xyznorm.x) + math.pi) % (2 * math.pi)) - math.pi
+				)..'°')
 			end
 
 			ig.igEndMenu()
