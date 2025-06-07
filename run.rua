@@ -185,14 +185,15 @@ local calcPlanetClasses = table.filter(Planets.planetClasses, |c| c.name ~= 'EM_
 
 local calcFlagsCode = [[
 enum {
-	CALC_TIDAL_VERT = 1,
-	CALC_TIDAL_HORZ = 2,
-	CALC_TIDAL = CALC_TIDAL_VERT | CALC_TIDAL_HORZ,
-	CALC_GRAV_VERT = 4,
-	CALC_GRAV_HORZ = 8,
-	CALC_GRAV = CALC_GRAV_VERT | CALC_GRAV_HORZ,
-	CALC_CROSS_POS = 16,
-	CALC_CROSS_VEL = 32,
+	calcFlags_calcTidesVert = 1,
+	calcFlags_calcTidesHorz = 2,
+	calcFlags_calcTides = calcFlags_calcTidesVert | calcFlags_calcTidesHorz,
+	calcFlags_calcGravVert = 4,
+	calcFlags_calcGravHorz = 8,
+	calcFlags_calcGrav = calcFlags_calcGravVert | calcFlags_calcGravHorz,
+	calcFlags_calcCrossPos = 16,
+	calcFlags_calcCrossVel = 32,
+	calcFlags_calcRadialIntegral = 64,
 };
 ]]
 ffi.cdef(calcFlagsCode)
@@ -213,12 +214,15 @@ local vars = table(
 		drawFlares = true,
 		flarePointSize = .005,
 		forceTexAlpha = .5,
-		calcVertTides = false,
-		calcHorzTides = false,
-		calcVertGrav = true,
-		calcHorzGrav = false,
+
+		calcTidesVert = false,
+		calcTidesHorz = false,
+		calcGravVert = true,
+		calcGravHorz = false,
 		calcCrossPos = false,	-- cross force with moment arm
 		calcCrossVel = false,
+		calcRadialIntegral = false,	-- integrate along earth radius parameter from core to surface
+
 		drawPlanets = drawPlanetClasses:mapi(|c|(
 			c.name == 'sun' or c.name == 'moon',
 			c.name
@@ -1061,6 +1065,60 @@ real4 calcTidalAccel(
 	return (x * (3. * xDotN / r2) - normal) * (gravitationalConstant * planetMass / r3);
 }
 
+real4 calcAccelAtPoint(
+	real4 posOnEarth,
+	real4 normal,
+	global real4 * const planetPosRelEarth,
+	int calcFlags
+) {
+	real4 accel = (real4)(0., 0., 0., 0.);
+
+	for (int j = 0; j < <?=#Planets.planetClasses?>; ++j) {
+	//for (int j = <?=Planets.indexes.earth-1?>; j <= <?=Planets.indexes.earth-1?>; ++j) {
+		if (planetPosRelEarth[j].w > 0.) {
+			if (calcFlags & calcFlags_calcTides) {
+				real4 tideAccel = calcTidalAccel(posOnEarth, normal, planetPosRelEarth[j]);
+				if ((calcFlags & calcFlags_calcTides) == calcFlags_calcTides) {
+					accel += tideAccel;
+				} else {
+					real4 tideNormal = normal * dot(tideAccel, normal);
+					real4 tideTangent = tideAccel - tideNormal;
+					if (calcFlags & calcFlags_calcTidesVert) accel += tideNormal;
+					if (calcFlags & calcFlags_calcTidesHorz) accel += tideTangent;
+				}
+			}
+			if (calcFlags & calcFlags_calcGrav) {
+				real4 gravAccel = calcGravityAccel(posOnEarth, planetPosRelEarth[j]);
+				if ((calcFlags & calcFlags_calcGrav) == calcFlags_calcGrav) {
+					accel += gravAccel;
+				} else {
+					real4 gravNormal = normal * dot(gravAccel, normal);
+					real4 gravTangent = gravAccel - gravNormal;
+					if (calcFlags & calcFlags_calcGravVert) accel += gravNormal;
+					if (calcFlags & calcFlags_calcGravHorz) accel += gravTangent;
+				}
+			}
+		}
+	}
+
+	if (calcFlags & calcFlags_calcCrossPos) {
+		accel = cross(posOnEarth, accel);	// torque = position cross accel
+		// TODO what about velocity as well? going with vs against earth rotation?
+	}
+	if (calcFlags & calcFlags_calcCrossVel) {
+		real radsPerSec = 2. * M_PI / (1. - 1. / 365.25) / (60. * 60. * 24.);
+		real4 velOnEarth = (real4)(
+			radsPerSec * -posOnEarth.y,
+			radsPerSec * posOnEarth.x,
+			0.,
+			0.
+		);
+		accel = cross(velOnEarth, accel);
+	}
+
+	return accel;
+}
+
 kernel void calcTideAndGrav(
 	global real * out,		// output[i] = force component specified
 	global real4 * const planetPosRelEarth,	// input positions[9] = (pos - earth.pos) x y z and mass = w
@@ -1080,50 +1138,31 @@ kernel void calcTideAndGrav(
 	real4 posOnEarth = chart_WGS84(latlon);
 	real4 normal = normalize(posOnEarth);
 
-	real4 accel = (real4)(0., 0., 0., 0.);
-	for (int j = 0; j < <?=#Planets.planetClasses?>; ++j) {
-	//for (int j = <?=Planets.indexes.earth-1?>; j <= <?=Planets.indexes.earth-1?>; ++j) {
-		if (planetPosRelEarth[j].w > 0.) {
-			if (calcFlags & CALC_TIDAL) {
-				real4 tideAccel = calcTidalAccel(posOnEarth, normal, planetPosRelEarth[j]);
-				if (calcFlags & CALC_TIDAL == CALC_TIDAL) {
-					accel += tideAccel;
-				} else {
-					real4 tideNormal = normal * dot(tideAccel, normal);
-					real4 tideTangent = tideAccel - tideNormal;
-					if (calcFlags & CALC_TIDAL_VERT) accel += tideNormal;
-					if (calcFlags & CALC_TIDAL_HORZ) accel += tideTangent;
-				}
-			}
-			if (calcFlags & CALC_GRAV) {
-				real4 gravAccel = calcGravityAccel(posOnEarth, planetPosRelEarth[j]);
-				if (calcFlags & CALC_GRAV == CALC_GRAV) {
-					accel += gravAccel;
-				} else {
-					real4 gravNormal = normal * dot(gravAccel, normal);
-					real4 gravTangent = gravAccel - gravNormal;
-					if (calcFlags & CALC_GRAV_VERT) accel += gravNormal;
-					if (calcFlags & CALC_GRAV_HORZ) accel += gravTangent;
-				}
-			}
+	real4 accel;
+	if (calcFlags & calcFlags_calcRadialIntegral) {
+		accel = (real4)(0., 0., 0., 0.);
+		//if calcFlags_calcRadialIntegral then integrate ...
+		real const rsurf = length(posOnEarth);
+		int const raddiv = 99;
+		real const oneOverRadDiv = 1. / (real)raddiv;
+		real const dr = rsurf * oneOverRadDiv;
+		real const dphi = 2. * M_PI / <?=clnumber(clsize[1])?>;
+		real const dtheta = M_PI / <?=clnumber(clsize[2])?>;
+		real const sinTheta = length(posOnEarth.xy) / rsurf;
+		real const sinTheta_dr_dtheta_dphi = sinTheta * dr * dtheta * dphi;
+		for (int i = 0; i < raddiv; ++i) {
+			real const f = ((real)i + .5) * oneOverRadDiv;
+			real const r = f * rsurf;
+			real4 accelAtPt = calcAccelAtPoint(posOnEarth * f, normal, planetPosRelEarth, calcFlags);
+			// TODO trapezoid integral across each face or something
+			accel += accelAtPt * r * sinTheta_dr_dtheta_dphi;
 		}
+	} else {
+		accel = calcAccelAtPoint(posOnEarth, normal, planetPosRelEarth, calcFlags);
 	}
 
-	if (calcFlags & CALC_CROSS_POS) {
-		accel = cross(posOnEarth, accel);	// torque = position cross accel
-		// TODO what about velocity as well? going with vs against earth rotation?
-	}
-	if (calcFlags & CALC_CROSS_VEL) {
-		real radsPerSec = 2. * M_PI / (1. - 1. / 365.25) / (60. * 60. * 24.);
-		real4 velOnEarth = (real4)(
-			radsPerSec * -posOnEarth.y,
-			radsPerSec * posOnEarth.x,
-			0.,
-			0.
-		);
-		accel = cross(velOnEarth, accel);
-	}
-
+	// TODO display components, not always length
+	// x y z r theta phi xy xz yz rth rph thph
 	out[index] = length(accel);
 }
 
@@ -1470,12 +1509,13 @@ if COMPUTE_TIDES then
 	self.planetPosRelEarthBuffer:fromCPU(self.planetPosRelEarthCPUBuf.v)
 
 	self.calcTideAndGravKernel.obj:setArg(2, int(0
-		| (vars.calcVertTides and ffi.C.CALC_TIDAL_VERT or 0)
-		| (vars.calcHorzTides and ffi.C.CALC_TIDAL_HORZ or 0)
-		| (vars.calcVertGrav and ffi.C.CALC_GRAV_VERT or 0)
-		| (vars.calcHorzGrav and ffi.C.CALC_GRAV_HORZ or 0)
-		| (vars.calcCrossPos and ffi.C.CALC_CROSS_POS or 0)
-		| (vars.calcCrossVel and ffi.C.CALC_CROSS_VEL or 0)
+		| (vars.calcTidesVert and ffi.C.calcFlags_calcTidesVert or 0)
+		| (vars.calcTidesHorz and ffi.C.calcFlags_calcTidesHorz or 0)
+		| (vars.calcGravVert and ffi.C.calcFlags_calcGravVert or 0)
+		| (vars.calcGravHorz and ffi.C.calcFlags_calcGravHorz or 0)
+		| (vars.calcCrossPos and ffi.C.calcFlags_calcCrossPos or 0)
+		| (vars.calcCrossVel and ffi.C.calcFlags_calcCrossVel or 0)
+		| (vars.calcRadialIntegral and ffi.C.calcFlags_calcRadialIntegral or 0)
 	))
 	self.calcTideAndGravKernel()
 
@@ -1543,19 +1583,19 @@ App.updateGUI = |:| do
 
 			ig.igText'force calcs:'
 			ig.igSameLine()
-			if ig.luatableTooltipCheckbox('calcVertTides', vars, 'calcVertTides') then
+			if ig.luatableTooltipCheckbox('calcTidesVert', vars, 'calcTidesVert') then
 				self:refreshForceBuffer()
 			end
 			ig.igSameLine()
-			if ig.luatableTooltipCheckbox('calcHorzTides', vars, 'calcHorzTides') then
+			if ig.luatableTooltipCheckbox('calcTidesHorz', vars, 'calcTidesHorz') then
 				self:refreshForceBuffer()
 			end
 			ig.igSameLine()
-			if ig.luatableTooltipCheckbox('calcVertGrav', vars, 'calcVertGrav') then
+			if ig.luatableTooltipCheckbox('calcGravVert', vars, 'calcGravVert') then
 				self:refreshForceBuffer()
 			end
 			ig.igSameLine()
-			if ig.luatableTooltipCheckbox('calcHorzGrav', vars, 'calcHorzGrav') then
+			if ig.luatableTooltipCheckbox('calcGravHorz', vars, 'calcGravHorz') then
 				self:refreshForceBuffer()
 			end
 			ig.igSameLine()
@@ -1564,6 +1604,10 @@ App.updateGUI = |:| do
 			end
 			ig.igSameLine()
 			if ig.luatableTooltipCheckbox('calcCrossVel', vars, 'calcCrossVel') then
+				self:refreshForceBuffer()
+			end
+			ig.igSameLine()
+			if ig.luatableTooltipCheckbox('calcRadialIntegral', vars, 'calcRadialIntegral') then
 				self:refreshForceBuffer()
 			end
 
