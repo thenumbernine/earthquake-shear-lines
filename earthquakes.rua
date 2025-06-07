@@ -85,6 +85,13 @@ print('total', #earthquakes)
 
 local latLonToXYZ = require 'charts'.latLonToXYZ
 
+--local CALC_SUN_OR_MOON_LONGITUDE_ANGLE = true
+if CALC_SUN_OR_MOON_LONGITUDE_ANGLE then
+	quakesWithinDegreesOfSun = range(180):mapi(||0)
+	quakesWithinDegreesOfMoon = range(180):mapi(||0)
+	quakesWithinDegreesOfSunOrMoon = range(180):mapi(||0)
+end	-- CALC_SUN_OR_MOON_LONGITUDE_ANGLE
+
 timer('calc xyz', ||do
 	for _,eq in ipairs(earthquakes) do
 		-- add preprocessed fields
@@ -110,6 +117,28 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		end
 		eq.xyz = latLonToXYZ(eq)
 		eq.xyznorm = eq.xyz:normalize()
+	
+		-- [[ do some calcs
+		if CALC_SUN_OR_MOON_LONGITUDE_ANGLE then
+			local vec2d = require 'vec-ffi.vec2d'
+			local pt2D = vec2d(eq.xyz.x, eq.xyz.y):normalize()
+			
+			local sunDir = eq.planets[Planets.indexes.sun].pos - eq.planets[Planets.indexes.earth].pos
+			local sunDir2D = vec2d(sunDir.x, sunDir.y):normalize()
+			local sunAngle = math.deg(math.acos(pt2D:dot(sunDir2D)))
+			assert.index(quakesWithinDegreesOfSun, math.ceil(sunAngle))
+			quakesWithinDegreesOfSun[math.ceil(sunAngle)] += 1
+			
+			local moonDir = eq.planets[Planets.indexes.moon].pos - eq.planets[Planets.indexes.earth].pos
+			local moonDir2D = vec2d(moonDir.x, moonDir.y):normalize()
+			local moonAngle = math.deg(math.acos(pt2D:dot(moonDir2D)))
+			assert.index(quakesWithinDegreesOfMoon, math.ceil(moonAngle))
+			quakesWithinDegreesOfMoon[math.ceil(moonAngle)] += 1
+		
+			assert.index(quakesWithinDegreesOfSunOrMoon, math.ceil(math.min(sunAngle, moonAngle)))
+			quakesWithinDegreesOfSunOrMoon[math.ceil(math.min(sunAngle, moonAngle))] += 1
+		end -- CALC_SUN_OR_MOON_LONGITUDE_ANGLE 
+		--]]
 	end
 	earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
 	--[[
@@ -118,6 +147,19 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 	end
 	--]]
 end)
+
+if CALC_SUN_OR_MOON_LONGITUDE_ANGLE then
+	path'quakes within angle of sun or moon.txt':write([[
+# plot fn using 0:1 title "sun", fn using 0:2 title "moon", fn using 0:3 title "sun or moon"
+# for various angles, count of # of quakes at that longitude angle from quake to sun or moon, from 2025/5/7 to 2025/6/7
+# sun angle, moon angle, min(sun angle, moon angle)
+]]
+	..range(180):mapi(|i| 
+		table{quakesWithinDegreesOfSun[i], quakesWithinDegreesOfMoon[i], quakesWithinDegreesOfSunOrMoon[i]}:concat'\t'
+	):concat'\n'
+)
+os.exit()
+end	-- CALC_SUN_OR_MOON_LONGITUDE_ANGLE 
 
 return {
 	-- for getting earthquakes
