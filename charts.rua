@@ -1,6 +1,10 @@
 -- TODO cache calcs somehow
 local vec3d = require 'vec-ffi.vec3d'
-local allCharts = require 'geographic-charts'
+
+-- just require'ing this file costs 4 seconds ... parser and langfix need to be sped up ...
+local allCharts = select(2, timer('require geographic-charts', ||
+	require 'geographic-charts'
+))
 
 local chartNames = table{	-- which charts we want to allow ...
 	'Equirectangular',
@@ -15,13 +19,22 @@ for i,name in ipairs(chartNames) do
 	charts[i] = chart
 	charts[name] = chart
 end
-for _,name in ipairs(chartNames) do
-	charts[name]?:build()
-end
-
 local chartCNames = charts:mapi(|chart| chart:getCName())
-local chartCode = require 'geographic-charts.code'(charts)
 
+
+-- can I skip :build once the GLSL code is cached?
+local chartCode
+local codeCacheFile = path'charts.glsl'
+if not codeCacheFile:exists() then  			-- this is 4 seconds
+	for _,name in ipairs(chartNames) do
+		charts[name]?:build()
+	end
+	chartCode = require 'geographic-charts.code'(charts)
+	assert.type(chartCode, 'string')	-- no functions, right?
+	codeCacheFile:write(chartCode)
+else
+	chartCode = assert(codeCacheFile:read())	-- this is near instant 
+end
 
 local WGS84 = charts.WGS84
 local latLonToXYZ = |eq| do
@@ -82,7 +95,6 @@ local cartesianToLatLonWGS84 = |x, y, z| do
 	end
 	return phi, lambda, height * 1e+3		-- km back to m
 end
-
 
 
 return {

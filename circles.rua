@@ -125,6 +125,8 @@ M.calcCircles=|earthquakes|do
 	-- this is slow, 80 seconds...
 	timer('find quakes along circles', ||do
 		local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(M.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
+		local sinQuakeAlignWithPreviousGeodesicAngleThreshold = math.sin(math.rad(M.quakeAlignWithPreviousGeodesicAngleThreshold))
+		local cosFilterDuplicateTouchingArcsAngleThreshold = math.cos(math.rad(M.filterDuplicateTouchingArcsAngleThreshold))
 		-- now find all geodesics touching each earthquake
 		for i,eq in ipairs(earthquakes) do
 			local v = eq.xyznorm
@@ -180,15 +182,14 @@ M.calcCircles=|earthquakes|do
 				if not tooCloseToArcGen then
 					-- if we were right on the plane then we would be right at 90' with the axis.
 					-- see how far the angle we make with the axis is from 90'
-					local angleDeviationFromArc = math.acos(c.axis:dot(v)) - .5 * math.pi
-					if math.abs(angleDeviationFromArc) < math.rad(M.quakeAlignWithPreviousGeodesicAngleThreshold) then
+					local sinAngleDeviationFromArc = c.axis:dot(v)	-- cos angle from axis = sine angle from rotation plane
+					if math.abs(sinAngleDeviationFromArc) < sinQuakeAlignWithPreviousGeodesicAngleThreshold then
 						-- if a previous great-arc was already associated with this point and it is close enough to the current great-arc then skip the current one (uniques only)
 						local dups
 						if (M.filterDuplicateTouchingArcsAngleThreshold or 0) > 0 then
-							local costh = math.cos(math.rad(M.filterDuplicateTouchingArcsAngleThreshold))
 							for ici2=1,ici-1 do
 								local c2 = allCircles[circlesInTimeWindow[ici2]]
-								if math.abs(c.axis:dot(c2.axis)) > costh then
+								if math.abs(c.axis:dot(c2.axis)) > cosFilterDuplicateTouchingArcsAngleThreshold then
 									dups = true
 									break
 								end
@@ -197,7 +198,10 @@ M.calcCircles=|earthquakes|do
 						if not dups then
 							-- TODO take note (or even filter?) based on the angle distance between us and the prevoius points that it took to form this geodesic?
 							-- what if all new quakes happen to be along geodesics but >90' of old geodesic points? (or whatever our geodesic creation angle criteria is)
-							touchingCircles:insert{circle=ci, angleDeviationFromArc=angleDeviationFromArc}
+							touchingCircles:insert{
+								circle = ci,
+								angleDeviationFromArc = math.abs(math.deg(math.asin(sinAngleDeviationFromArc))),
+							}
 						end
 					end
 				end

@@ -1,3 +1,4 @@
+return select(2, timer('earthquakes.rua', ||do	-- BEGIN TIMER
 --[[
 what to track ...
 - over a time range, sequentially go through all earthquakes
@@ -15,12 +16,10 @@ local timegm = require 'time'.timegm
 local gmtime = require 'time'.gmtime
 local dayInSec = require 'time'.dayInSec
 local rotateFromSolarToEarthFrame = require 'time'.rotateFromSolarToEarthFrame
---[[
-print('time()', time())	-- this is time since 1970 ... your timezone ... right?
-print('gmtime', tolua(gmtime()))
-print('timegm(gmtime)', tolua(timegm(gmtime())))
-os.exit()
---]]
+
+local prevDays = 31
+--local prevDays = 365
+--local CALC_SUN_OR_MOON_LONGITUDE_ANGLE = true
 
 -- [=======[ download data
 path'cache':mkdir()
@@ -66,8 +65,6 @@ end
 
 local earthquakes = table()
 local checkTime = time()
-local prevDays = 31
---local prevDays = 365
 do	-- I wish for-loops worked with cdata primitives ...
 	local t = checkTime - prevDays * dayInSec
 	while t <= checkTime - dayInSec do
@@ -85,7 +82,6 @@ print('total', #earthquakes)
 
 local latLonToXYZ = require 'charts'.latLonToXYZ
 
---local CALC_SUN_OR_MOON_LONGITUDE_ANGLE = true
 if CALC_SUN_OR_MOON_LONGITUDE_ANGLE then
 	quakesWithinDegreesOfSun = range(180):mapi(||0)
 	quakesWithinDegreesOfMoon = range(180):mapi(||0)
@@ -154,11 +150,11 @@ if CALC_SUN_OR_MOON_LONGITUDE_ANGLE then
 # for various angles, count of # of quakes at that longitude angle from quake to sun or moon, from 2025/5/7 to 2025/6/7
 # sun angle, moon angle, min(sun angle, moon angle)
 ]]
-	..range(180):mapi(|i| 
-		table{quakesWithinDegreesOfSun[i], quakesWithinDegreesOfMoon[i], quakesWithinDegreesOfSunOrMoon[i]}:concat'\t'
-	):concat'\n'
-)
-os.exit()
+		..range(180):mapi(|i| 
+			table{quakesWithinDegreesOfSun[i], quakesWithinDegreesOfMoon[i], quakesWithinDegreesOfSunOrMoon[i]}:concat'\t'
+		):concat'\n'
+	)
+	os.exit()
 end	-- CALC_SUN_OR_MOON_LONGITUDE_ANGLE 
 
 return {
@@ -168,3 +164,5 @@ return {
 	-- the initial earthquake set
 	earthquakes = assert(earthquakes),
 }
+
+end))	-- END TIMER

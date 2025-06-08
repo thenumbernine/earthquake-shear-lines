@@ -68,4 +68,11 @@ M.rotateFromSolarToEarthFrame = |v, jday| do
 	return v
 end
 
+--[[
+print('time()', time())	-- this is time since 1970 ... your timezone ... right?
+print('gmtime', tolua(gmtime()))
+print('timegm(gmtime)', tolua(timegm(gmtime())))
+os.exit()
+--]]
+
 return M
