@@ -2057,13 +2057,15 @@ App.updateGUI = |:| do
 
 			local earthPos = eq.planets[Planets.indexes.earth].pos
 			for _,cl in ipairs(drawPlanetClasses) do	-- planets without earth (nan angle) and EM_Bary (same angle as moon)
-				local planet = eq.planets[Planets.indexes[cl.name]]
+				local planetIndex = Planets.indexes[cl.name]
+				local planet = eq.planets[planetIndex]
 				local planetDir = (planet.pos - earthPos):normalize()
-				ig.igText(planet.name..' 3D angle '..math.deg(math.acos(
+				ig.igText(planet.name..' 3D angle: '..math.deg(math.acos(
 					eq.xyznorm:dot(planetDir)
-				))..'°, 2D angle '..math.deg(
+				))..'°, 2D angle: '..math.deg(
 					((math.atan2(planetDir.y, planetDir.x) - math.atan2(eq.xyznorm.y, eq.xyznorm.x) + math.pi) % (2 * math.pi)) - math.pi
-				)..'°')
+				)..'°, angle to closest touching geodesic: '
+					..eq.minAngleForPlanets[planetIndex]..'°')
 			end
 
 			ig.igEndMenu()
