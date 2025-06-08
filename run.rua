@@ -2046,7 +2046,7 @@ App.updateGUI = |:| do
 				end
 
 				ig.igSameLine()
-				ig.igText(math.deg(t.angleDeviationFromArc)..'° from arc')
+				ig.igText(t.angleFromArcInDeg..'° from arc')
 
 				ig.igPopID()
 			end

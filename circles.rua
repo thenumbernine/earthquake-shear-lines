@@ -125,8 +125,8 @@ M.calcCircles=|earthquakes|do
 	-- this is slow, 80 seconds...
 	timer('find quakes along circles', ||do
 		local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(M.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
-		local sinQuakeAlignWithPreviousGeodesicAngleThreshold = math.sin(math.rad(M.quakeAlignWithPreviousGeodesicAngleThreshold))
 		local cosFilterDuplicateTouchingArcsAngleThreshold = math.cos(math.rad(M.filterDuplicateTouchingArcsAngleThreshold))
+
 		-- now find all geodesics touching each earthquake
 		for i,eq in ipairs(earthquakes) do
 			local v = eq.xyznorm
@@ -163,7 +163,7 @@ M.calcCircles=|earthquakes|do
 					circlesInTimeWindow[ci] = true
 				end
 			end
-			circlesInTimeWindow = table.keys(circlesInTimeWindow)
+			circlesInTimeWindow = table.keys(circlesInTimeWindow):sort()
 
 			-- see how close it is to all other circles on file
 			local touchingCircles = table()
@@ -171,19 +171,24 @@ M.calcCircles=|earthquakes|do
 				local c = assert.index(allCircles, ci)
 
 				-- make sure that the points that formed this great-arc are far from this point
-				local tooCloseToArcGen
-				for k,ei in ipairs(c.indexes) do
-					local cosAngle = earthquakes[ei].xyznorm:dot(v)
-					if cosAngle > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
-						tooCloseToArcGen = true
-						break
+				local tooCloseToArcGen = c.indexes[1] == i or c.indexes[2] == i
+				if not tooCloseToArcGen then
+					for k,ei in ipairs(c.indexes) do
+						local cosAngle = earthquakes[ei].xyznorm:dot(v)
+						if cosAngle > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
+							tooCloseToArcGen = true
+							break
+						end
 					end
 				end
 				if not tooCloseToArcGen then
 					-- if we were right on the plane then we would be right at 90' with the axis.
 					-- see how far the angle we make with the axis is from 90'
-					local sinAngleDeviationFromArc = c.axis:dot(v)	-- cos angle from axis = sine angle from rotation plane
-					if math.abs(sinAngleDeviationFromArc) < sinQuakeAlignWithPreviousGeodesicAngleThreshold then
+					local cosAngleFromAxis = c.axis:dot(v)	-- cos angle from axis = sine angle from rotation plane
+					local angleFromAxis = math.acos(cosAngleFromAxis)
+					local angleFromArc = angleFromAxis - .5 * math.pi
+					local angleFromArcInDeg = math.abs(math.deg(angleFromArc))
+					if angleFromArcInDeg < M.quakeAlignWithPreviousGeodesicAngleThreshold then
 						-- if a previous great-arc was already associated with this point and it is close enough to the current great-arc then skip the current one (uniques only)
 						local dups
 						if (M.filterDuplicateTouchingArcsAngleThreshold or 0) > 0 then
@@ -200,7 +205,7 @@ M.calcCircles=|earthquakes|do
 							-- what if all new quakes happen to be along geodesics but >90' of old geodesic points? (or whatever our geodesic creation angle criteria is)
 							touchingCircles:insert{
 								circle = ci,
-								angleDeviationFromArc = math.abs(math.deg(math.asin(sinAngleDeviationFromArc))),
+								angleFromArcInDeg = angleFromArcInDeg,
 							}
 						end
 					end
@@ -221,6 +226,77 @@ M.calcCircles=|earthquakes|do
 			--]=]
 		end
 	end)
+
+-- some aside calcs
+-- for each quake,
+-- see how many geodesics that go through it and two others (within 0.1 degrees or whateer tolerance)
+-- will also go through any particular planet
+--local CALC_PLANETS_TOUCHING_GEODESICS = true
+if CALC_PLANETS_TOUCHING_GEODESICS then
+	local Planets = require 'solarsystem.planets'
+	local planetAngleFromGeodesics = table.mapi(Planets.planetClasses, || range(180):mapi(|| 0 ) )
+	for _,eq in ipairs(earthquakes) do
+		for _,t in ipairs(eq.touchingCircles) do
+			local c = allCircles[t.circle]
+			for pi,p in ipairs(eq.planets) do
+				if p.name ~= 'earth' then
+					local planetDir = (p.pos - eq.planets[eq.planets.indexes.earth].pos):normalize()
+					local cosAngleFromAxis = c.axis:dot(planetDir)	-- cos angle from axis = sine angle from plane
+					local angleFromAxis = math.acos(cosAngleFromAxis)
+					local angleFromArc = angleFromAxis - .5 * math.pi
+					local angleFromArcInDeg = math.abs(math.deg(angleFromArc))	-- will be 0 to 90
+					planetAngleFromGeodesics[pi][math.ceil(angleFromArcInDeg)] += 1
+				end
+			end
+		end
+	end
+	path'angle of planets from current quake geodesics.txt':write(
+		'#'..table.mapi(Planets.planetClasses, |p| p.name):concat'\t'..'\n'
+		..range(#planetAngleFromGeodesics[1]):mapi(|deg|
+			table.mapi(Planets.planetClasses, |p,i|
+				planetAngleFromGeodesics[i][deg]
+			):concat'\t'
+		):concat'\n'..'\n'
+	)
+end	-- CALC_PLANETS_TOUCHING_GEODESICS
+
+-- how about instead of calc'ing angle from *all* pairs
+-- how about, for an earthquke, just see if the sun is within *any* geodesics
+local CALC_GEODESICS_NEAR_PLANETS = true
+if CALC_GEODESICS_NEAR_PLANETS then
+	local Planets = require 'solarsystem.planets'
+	local planetMinAngleFromGeodesics = table.mapi(Planets.planetClasses, || range(180):mapi(|| 0 ) )
+	for _,eq in ipairs(earthquakes) do
+
+		local minAngleForPlanets = range(#Planets.planetClasses):mapi(||180)
+		for _,t in ipairs(eq.touchingCircles) do
+			local c = allCircles[t.circle]
+			for pi,p in ipairs(eq.planets) do
+				if p.name ~= 'earth' then
+					local planetDir = (p.pos - eq.planets[eq.planets.indexes.earth].pos):normalize()
+					local cosAngleFromAxis = c.axis:dot(planetDir)	-- cos angle from axis = sine angle from plane
+					local angleFromAxis = math.acos(cosAngleFromAxis)
+					local angleFromArc = angleFromAxis - .5 * math.pi
+					local angleFromArcInDeg = math.abs(math.deg(angleFromArc))	-- will be 0 to 90
+					--planetAngleFromGeodesics[pi][math.ceil(angleFromArc)] += 1
+					minAngleForPlanets[pi] = math.min(minAngleForPlanets[pi], angleFromArcInDeg)
+				end
+			end
+		end
+		-- for this quake, tally the min angle between each planet and all active geodesics through this quake
+		for pi=1,#Planets.planetClasses do
+			planetMinAngleFromGeodesics[pi][math.ceil(minAngleForPlanets[pi])] += 1
+		end
+	end
+	path'min angle of planets from current quake geodesics.txt':write(
+		'#'..table.mapi(Planets.planetClasses, |p| p.name):concat'\t'..'\n'
+		..range(#planetMinAngleFromGeodesics[1]):mapi(|deg|
+			table.mapi(Planets.planetClasses, |p,i|
+				planetMinAngleFromGeodesics[i][deg]
+			):concat'\t'
+		):concat'\n'..'\n'
+	)
+end	-- CALC_GEODESICS_NEAR_PLANETS
 
 	return allCircles
 end
