@@ -328,7 +328,7 @@ App.calcQuakeWindowIndexes = |:|do
 		-- this function will compute eq.touchingCircles
 		--and return the window's "allCircles", which I will store here
 		-- now reclaculate all circles within our window
-		eq.allCircles = calcCircles.calcCircles(earthquakes, vars.earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex)
+		calcCircles.calcCircles(earthquakes, vars.earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex)
 	
 		-- should this be based on what quakes are within 60' and caused me to flag the geodesic?
 		-- or should this be on what quakes are subsequently within 1' or 5' or so of that geodesic after-the-fact?
@@ -343,6 +343,16 @@ App.calcQuakeWindowIndexes = |:|do
 	end
 	self:refreshVisibleCircles()	-- TODO don't recalc all circles, just recalc indexes used
 end
+
+-- if we change a quake search parameter then delete all the cached arcs
+App.invalidateCachedQuakeArcs = |:|do
+	for _,eq in ipairs(earthquakes) do
+		eq.allCircles = nil
+		eq.touchingCircles = nil
+		eq.circlesMadeByQuakes = nil
+	end
+end
+
 
 local texWrap = {
 	s = gl.GL_REPEAT,
@@ -1989,32 +1999,6 @@ App.updateGUI = |:| do
 			
 			ig.igEndMenu()
 		end
-		if ig.igBeginMenu'circles:' then
-
-			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
-				self:calcQuakeWindowIndexes()
-			end
-			if inputText('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
-				self:calcQuakeWindowIndexes()
-			end
-			if inputText('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
-				self:calcQuakeWindowIndexes()
-			end
-			if inputText('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
-				self:calcQuakeWindowIndexes()
-			end
-			if inputText('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
-				self:calcQuakeWindowIndexes()
-			end
-			if inputText('prevTimeWindowInDays', calcCircles, 'prevTimeWindowInDays') then
-				self:calcQuakeWindowIndexes()
-			end
-			if inputText('nextTimeWindowInDays', calcCircles, 'nextTimeWindowInDays') then
-				self:calcQuakeWindowIndexes()
-			end
-
-			ig.igEndMenu()
-		end
 		if ig.igBeginMenu'chart:' then
 
 			ig.luatableCheckbox('normalize weights', vars, 'normalizeWeights')
@@ -2055,6 +2039,40 @@ App.updateGUI = |:| do
 
 			ig.igEndMenu()
 		end
+		if ig.igBeginMenu'circles:' then
+
+			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
+				self:invalidateCachedQuakeArcs()
+				self:calcQuakeWindowIndexes()
+			end
+			if inputText('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
+				self:invalidateCachedQuakeArcs()
+				self:calcQuakeWindowIndexes()
+			end
+			if inputText('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
+				self:invalidateCachedQuakeArcs()
+				self:calcQuakeWindowIndexes()
+			end
+			if inputText('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
+				self:invalidateCachedQuakeArcs()
+				self:calcQuakeWindowIndexes()
+			end
+			if inputText('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
+				self:invalidateCachedQuakeArcs()
+				self:calcQuakeWindowIndexes()
+			end
+			if inputText('prevTimeWindowInDays', calcCircles, 'prevTimeWindowInDays') then
+				self:invalidateCachedQuakeArcs()
+				self:calcQuakeWindowIndexes()
+			end
+			if inputText('nextTimeWindowInDays', calcCircles, 'nextTimeWindowInDays') then
+				self:invalidateCachedQuakeArcs()
+				self:calcQuakeWindowIndexes()
+			end
+
+			ig.igEndMenu()
+		end
+		
 		if ig.igBeginMenu('touching '..#eq.touchingCircles) then
 			for i,t in ipairs(eq.touchingCircles) do
 				ig.igPushID_Int(i)

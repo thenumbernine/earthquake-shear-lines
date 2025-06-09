@@ -58,24 +58,26 @@ local basisFor = require 'basis'.basisFor
 -- TODO TODO now that I'm not calculating *all* circles, it's gonna be duplicate calculating a few circles for each new quake ...
 M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex|do
 
+	local eq = earthquakes[earthquakeIndex]
+
 	-- calculate all geodesics subject to our criteria
-	local allCircles = table()
+	eq.allCircles = table()
 	timer('calc circles', ||do
-		for _,eq in ipairs(earthquakes) do
-			eq.circles = {}
+		for _,eq2 in ipairs(earthquakes) do
+			eq2.circles = {}
 		end
 
 		local oldestEarthquakeIndex = earthquakeWindowStartIndex
 		for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
-			local eq = earthquakes[i]
-			local v = eq.xyznorm
+			local eq2 = earthquakes[i]
+			local v = eq2.xyznorm
 			-- now do our typical building of great-arcs based on our other angle criteria
 			-- TODO do the building of great-arcs FIRST and then scan PLUS OR MINUS in our time window.
 			for j=oldestEarthquakeIndex,i do
 				-- TODO filter out repetitive points
 
-				local eq2 = earthquakes[j]
-				local v2 = eq2.xyznorm	-- spherical
+				local eq3 = earthquakes[j]
+				local v2 = eq3.xyznorm	-- spherical
 
 				local dups
 				-- filter out duplicate points for great-arc construction consideration ...
@@ -94,7 +96,7 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 					local torque = v:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
 					local axisLen = torque:length()
 					local axis = torque * (1 / (math.max(axisLen, 1e-15)))
-					local influence = axisLen * 10^eq.mag * 10^eq2.mag
+					local influence = axisLen * 10^eq2.mag * 10^eq3.mag
 					local angle = math.acos(v:dot(v2))
 					if math.rad(M.greatArcAngleMin) < angle and angle < math.rad(M.greatArcAngleMax) then	-- if I weight by cross then that'll make the 0' and 180' angles diminish ... nah, there's still a lot of noise unless I turn down the alpha ... then it's hard to highlight any geodesics ...
 						local a1 = axis
@@ -114,37 +116,35 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 							--]]
 						}
 
-						allCircles:insert(circle)
-						eq.circles[#allCircles] = true
-						eq2.circles[#allCircles] = true
+						eq.allCircles:insert(circle)
+						eq2.circles[#eq.allCircles] = true
+						eq3.circles[#eq.allCircles] = true
 					end
 				end
 			end
 
 			-- now recalculate the oldest point index t consider (basd on our time window)
 			while oldestEarthquakeIndex < i
-			and eq.ostime - earthquakes[oldestEarthquakeIndex].ostime > M.prevTimeWindowInDays * dayInSec
+			and eq2.ostime - earthquakes[oldestEarthquakeIndex].ostime > M.prevTimeWindowInDays * dayInSec
 			do
 				oldestEarthquakeIndex+=1
 			end
 		end
 	end)
-	print('made '..#allCircles..' great-arcs')
+--print('made '..#eq.allCircles..' great-arcs')
 
+	-- now find all geodesics touching each earthquake
 	-- this is slow, 80 seconds... but per quake is 0.1 secons ....
 	timer('find quakes along circles', ||do
 		local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(M.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
 		local cosFilterDuplicateTouchingArcsAngleThreshold = math.cos(math.rad(M.filterDuplicateTouchingArcsAngleThreshold))
 
-		-- now find all geodesics touching each earthquake
-		local eq = earthquakes[earthquakeIndex]
-
 		local v = eq.xyznorm
 
 		-- see how close it is to all other circles on file
 		local touchingCircles = table()
-		for ci=1,#allCircles do
-			local c = assert.index(allCircles, ci)
+		for ci=1,#eq.allCircles do
+			local c = assert.index(eq.allCircles, ci)
 
 			-- make sure that the points that formed this great-arc are far from this point
 			local tooCloseToArcGen = c.indexes[1] == earthquakeIndex or c.indexes[2] == earthquakeIndex
@@ -169,7 +169,7 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 					local dups
 					if (M.filterDuplicateTouchingArcsAngleThreshold or 0) > 0 then
 						for ci2=1,ci-1 do
-							local c2 = allCircles[ci2]
+							local c2 = eq.allCircles[ci2]
 							if math.abs(c.axis:dot(c2.axis)) > cosFilterDuplicateTouchingArcsAngleThreshold then
 								dups = true
 								break
@@ -242,8 +242,6 @@ if CALC_GEODESICS_NEAR_PLANETS then
 		):concat'\n'..'\n'
 	)
 end	-- CALC_GEODESICS_NEAR_PLANETS
-
-	return allCircles
 end
 
 return M
