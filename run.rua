@@ -1530,6 +1530,10 @@ App.refreshVisibleCircles = |:| do
 	end
 end
 
+--[[
+this represents Rz(heading) * Ry(pitch) * Rx(bank) * v
+seems to be equivalent to my "applyLatLonRoll0Inv" which might not be an inverse after all
+--]]
 local eulerToQuat = |lat, lon, roll|do
 	lat = math.rad(lat)
 	lon = math.rad(lon)
@@ -1593,7 +1597,7 @@ App.update = |:| do
 -- [[ SLERP ... involves some converting to and from euler angles and quaternions ...
 		local q1 = eulerToQuat(vars.lat0, vars.lon0, vars.roll0)
 		local q2 = eulerToQuat(vars.targetlat0, vars.targetlon0, vars.targetroll0)
-		if math.abs(q1:dot(q2)) > .999 then
+		if math.abs(q1:dot(q2)) > .99999 then
 			vars.lat0 = vars.targetlat0
 			vars.lon0 = vars.targetlon0
 			vars.roll0 = vars.targetroll0
@@ -2118,6 +2122,8 @@ App.updateGUI = |:| do
 			ig.igEndMenu()
 		end
 		if ig.igBeginMenu'circles:' then
+
+			ig.igText('# all geodesics through selected quake = '..#eq.allCircles)
 
 			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
 				self:invalidateCachedQuakeArcs()
