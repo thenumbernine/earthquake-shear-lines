@@ -281,14 +281,18 @@ local vars = table(
 ):setmetatable(nil)
 
 
+local App = require 'imgui.appwithorbit'()
+App.title = 'Earthquake Geodesics'
+App.viewDist = 2
+
 local earthquakeWindowStartIndex
 local earthquakeWindowEndIndex
 local flareWindowStartIndex = 0
 local flareWindowEndIndex = 0
-local recalculateOldestEarthquakeIndex = ||do
+App.calcQuakeWindowIndexes = |:|do
 	-- TODO with bisect
-	local windowStartTime = earthquakes[vars.earthquakeIndex].ostime - calcCircles.timeWindowInDays * dayInSec
-	local windowEndTime = earthquakes[vars.earthquakeIndex].ostime + calcCircles.timeWindowInDays * dayInSec
+	local windowStartTime = earthquakes[vars.earthquakeIndex].ostime - calcCircles.prevTimeWindowInDays * dayInSec
+	local windowEndTime = earthquakes[vars.earthquakeIndex].ostime + calcCircles.nextTimeWindowInDays * dayInSec
 
 	earthquakeWindowStartIndex = vars!.earthquakeIndex
 	for i=vars.earthquakeIndex,1,-1 do
@@ -313,29 +317,26 @@ local recalculateOldestEarthquakeIndex = ||do
 			flareWindowEndIndex = i
 		end
 	end
-end
 
-
-local App = require 'imgui.appwithorbit'()
-App.title = 'Earthquake Geodesics'
-App.viewDist = 2
-
-local allCircles, circlesMadeByQuakes
-App.recalcAllCircles=|:|do
-	allCircles = calcCircles.calcCircles(earthquakes)
-
-	-- should this be based on what quakes are within 60' and caused me to flag the geodesic?
-	-- or should this be on what quakes are subsequently within 1' or 5' or so of that geodesic after-the-fact?
-	-- doing the former first ...
-	circlesMadeByQuakes = {}
-	for ci,c in ipairs(allCircles) do
-		for _,i in ipairs(c.indexes) do
-			circlesMadeByQuakes[i] ??= table()
-			circlesMadeByQuakes[i]:insert(ci)
+	local eq = earthquakes![vars.earthquakeIndex]
+	if not eq.touchingCircles then
+		-- this function will compute eq.touchingCircles
+		--and return the window's "allCircles", which I will store here
+		-- now reclaculate all circles within our window
+		eq.allCircles = calcCircles.calcCircles(earthquakes, vars.earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex)
+	
+		-- should this be based on what quakes are within 60' and caused me to flag the geodesic?
+		-- or should this be on what quakes are subsequently within 1' or 5' or so of that geodesic after-the-fact?
+		-- doing the former first ...
+		eq.circlesMadeByQuakes = {}
+		for ci,c in ipairs(eq.allCircles) do
+			for _,i in ipairs(c.indexes) do
+				eq.circlesMadeByQuakes[i] ??= table()
+				eq.circlesMadeByQuakes[i]:insert(ci)
+			end
 		end
 	end
-
-	self:refreshRelevantCircles()	-- TODO don't recalc all circles, just recalc indexes used
+	self:refreshVisibleCircles()	-- TODO don't recalc all circles, just recalc indexes used
 end
 
 local texWrap = {
@@ -1479,30 +1480,31 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 	):unbind()
 	self.globeObj.texs[3] = self.gradientTex
 
-	recalculateOldestEarthquakeIndex()
-	self:recalcAllCircles()
 	self:updateEarthquakeIndex()
 end
 
 -- refresh the list of what circles we want to display right now
 -- this is either all circles in the last period (3 days? 1 day? etc)
 -- or it is all that are touching the currently selected quake
-App.refreshRelevantCircles = |:| do
+App.refreshVisibleCircles = |:| do
+	local eq = earthquakes[vars.earthquakeIndex]
 	if vars.showOnlySelectedEarthquakeArcs then
 		-- show all circles touching our currently selected
-		circles = earthquakes[vars.earthquakeIndex]
-			.touchingCircles:mapi(|t| allCircles[t.circle])
+		circles = eq.touchingCircles:mapi(|t| t.circle)
 	else
 		-- show all circles touching any active earthquakes in the last timeframe
 		-- TODO also include future window ... but also TODO should we show future earthquakes too?
 		-- TODO earthquake window slider relative to the previous quake?
 		local circleIndexes = table()
 		for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
-			for _,ci in ipairs(circlesMadeByQuakes[i]) do
-				circleIndexes[ci] = true
+			local cis = eq.circlesMadeByQuakes[i]
+			if cis then
+				for _,ci in ipairs(cis) do
+					circleIndexes[ci] = true
+				end
 			end
 		end
-		circles = circleIndexes:keys():sort():mapi(|ci| allCircles[ci])
+		circles = circleIndexes:keys():sort():mapi(|ci| eq.allCircles[ci])
 	end
 end
 
@@ -1767,8 +1769,7 @@ App.updateEarthquakeIndex = |:| do
 	vars.earthquakeIndex = math.clamp(math.round(vars.earthquakeIndex), 1, #earthquakes)
 
 	-- TODO redo circle' touchingindexes to scan both + and - in time by 1 day
-	recalculateOldestEarthquakeIndex()
-	self:refreshRelevantCircles()	-- TODO don't recalc all circles, just recalc indexes used
+	self:calcQuakeWindowIndexes()
 	self:refreshForceBuffer()
 end
 
@@ -1926,7 +1927,7 @@ App.updateGUI = |:| do
 			ig.luatableSliderFloat('drapTexAlpha', vars, 'drapTexAlpha', 0, 1)
 
 			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
-				self:refreshRelevantCircles()
+				self:refreshVisibleCircles()
 			end
 
 			--[=[ TODO
@@ -1964,23 +1965,25 @@ App.updateGUI = |:| do
 		if ig.igBeginMenu'circles:' then
 
 			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
-				self:recalcAllCircles()
+				self:calcQuakeWindowIndexes()
 			end
 			if inputText('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
-				self:recalcAllCircles()
+				self:calcQuakeWindowIndexes()
 			end
 			if inputText('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
-				self:recalcAllCircles()
+				self:calcQuakeWindowIndexes()
 			end
 			if inputText('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
-				self:recalcAllCircles()
+				self:calcQuakeWindowIndexes()
 			end
 			if inputText('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
-				self:recalcAllCircles()
+				self:calcQuakeWindowIndexes()
 			end
-			if inputText('timeWindowInDays', calcCircles, 'timeWindowInDays') then
-				recalculateOldestEarthquakeIndex()
-				self:recalcAllCircles()
+			if inputText('prevTimeWindowInDays', calcCircles, 'prevTimeWindowInDays') then
+				self:calcQuakeWindowIndexes()
+			end
+			if inputText('nextTimeWindowInDays', calcCircles, 'nextTimeWindowInDays') then
+				self:calcQuakeWindowIndexes()
 			end
 
 			ig.igEndMenu()
@@ -2022,7 +2025,7 @@ App.updateGUI = |:| do
 		if ig.igBeginMenu('touching '..#eq.touchingCircles) then
 			for i,t in ipairs(eq.touchingCircles) do
 				ig.igPushID_Int(i)
-				local c = allCircles[t.circle]
+				local c = t.circle
 				local i1, i2 = table.unpack(c.indexes)
 				local eq1 = earthquakes[i1]
 				local eq2 = earthquakes[i2]
