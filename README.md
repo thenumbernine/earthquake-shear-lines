@@ -7,6 +7,11 @@ TO CALC:
 
 TO PROGRAM:
 - use bisect method for esarch for time windows in the earthquakes and flares data
+- add LLSVP from somewhere
+- add GRACE GPB ... from somewhere
+- add all that NOAA calcs like geoid etc overlays
+- add live satellite overlays and calculations for gradients of cloud cover ....
+
 - when creating geodesics, filter out identical pairs to prevent those huge alpha stacking over high-quantity (low-magnitude) areas
 	- make this optional
 - click to select point and geodesic
