@@ -137,9 +137,9 @@ vec2 applyLatLonRoll0(vec2 latlon) {
 	vec2 latcs = vec2exp(latlonroll0.x * M_PI / 180.);
 	vec2 loncs = vec2exp(latlonroll0.y * M_PI / 180.);
 	vec2 rollcs = vec2exp(latlonroll0.z * M_PI / 180.);
-	pos = rotateZ(pos, -latlonroll0.y * M_PI / 180.);
-	pos = rotateY(pos, latlonroll0.x * M_PI / 180.);
-	pos = rotateX(pos, latlonroll0.z * M_PI / 180.);
+	pos = rotateZ(pos, -latlonroll0.y * M_PI / 180.);	// heading / yaw
+	pos = rotateY(pos, latlonroll0.x * M_PI / 180.);	// pitch / inclination
+	pos = rotateX(pos, latlonroll0.z * M_PI / 180.);	// bank / roll
 
 	// chartInv_sphere expects north pole to be z+, prime meridian to be x+
 	pos.zxy = pos.xyz;
@@ -160,9 +160,9 @@ vec2 applyLatLonRoll0Inv(vec2 latlon) {
 	vec2 loncs = vec2exp(latlonroll0.y * M_PI / 180.);
 	vec2 rollcs = vec2exp(latlonroll0.z * M_PI / 180.);
 
-	pos = rotateX(pos, -latlonroll0.z * M_PI / 180.);
-	pos = rotateY(pos, -latlonroll0.x * M_PI / 180.);
-	pos = rotateZ(pos, latlonroll0.y * M_PI / 180.);
+	pos = rotateX(pos, -latlonroll0.z * M_PI / 180.);	// bank / roll
+	pos = rotateY(pos, -latlonroll0.x * M_PI / 180.);	// pitch / inclination
+	pos = rotateZ(pos, latlonroll0.y * M_PI / 180.);	// heading / yaw
 
 	// chartInv_sphere expects north pole to be z+, prime meridian to be x+
 	pos.zxy = pos.xyz;
@@ -1530,6 +1530,54 @@ App.refreshVisibleCircles = |:| do
 	end
 end
 
+local eulerToQuat = |lat, lon, roll|do
+	lat = math.rad(lat)
+	lon = math.rad(lon)
+	roll = math.rad(roll)
+	local pitch = -lat
+	local yaw = lon
+	roll = -roll
+
+    local cr = math.cos(roll * .5)
+    local sr = math.sin(roll * .5)
+    local cp = math.cos(pitch * .5)
+    local sp = math.sin(pitch * .5)
+    local cy = math.cos(yaw * .5)
+    local sy = math.sin(yaw * .5)
+
+    local q = quatd()
+    q.w = cr * cp * cy + sr * sp * sy
+    q.x = sr * cp * cy - cr * sp * sy
+    q.y = cr * sp * cy + sr * cp * sy
+    q.z = cr * cp * sy - sr * sp * cy
+
+    return q
+end
+local quatToEuler = |q|do
+    -- roll (x-axis rotation)
+    local sinr_cosp = 2 * (q.w * q.x + q.y * q.z)
+    local cosr_cosp = 1 - 2 * (q.x * q.x + q.y * q.y)
+    local roll = math.atan2(sinr_cosp, cosr_cosp)
+
+    -- pitch (y-axis rotation)
+    local sinp = math.sqrt(1 + 2 * (q.w * q.y - q.x * q.z))
+    local cosp = math.sqrt(1 - 2 * (q.w * q.y - q.x * q.z))
+    local pitch = 2 * math.atan2(sinp, cosp) - math.pi * .5
+
+    -- yaw (z-axis rotation)
+    local siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+    local cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+    local yaw = math.atan2(siny_cosp, cosy_cosp)
+
+	local lat = -pitch
+	local lon = yaw
+	roll = -roll
+	lat = math.deg(lat)
+	lon = math.deg(lon)
+	roll = math.deg(roll)
+	return lat, lon, roll
+end
+
 local drapPath = path'goes_drap'
 drapPath:mkdir()
 local nextDrapCheckTime = timer.getTime() - 1
@@ -1537,16 +1585,22 @@ App.update = |:| do
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
 	if vars.recenterOnQuake then
--- [[ LERP - and all the coordinate problems that go with it
+--[[ LERP - and all the coordinate problems that go with it
 		vars.lat0 = math.mix(vars.lat0, vars.targetlat0, vars.latlonroll0convergeRate)
 		vars.lon0 = math.mix(vars.lon0, vars.targetlon0, vars.latlonroll0convergeRate)
 		vars.roll0 = math.mix(vars.roll0, vars.targetroll0, vars.latlonroll0convergeRate)
 --]]
---[[ SLERP ... involves some converting to and from euler angles and quaternions ...
-		local q1 = eulerToQuat(lat0, lon0, roll0)
-		local q2 = eulerToQuat(targetlat0, targetlon0, targetroll0)
-		local q = quatd():slerp(q1, q2, vars.latlonroll0convergeRate)
-		vars.lat0, vars.lon0, vars.roll0 = quatToEuler(q)
+-- [[ SLERP ... involves some converting to and from euler angles and quaternions ...
+		local q1 = eulerToQuat(vars.lat0, vars.lon0, vars.roll0)
+		local q2 = eulerToQuat(vars.targetlat0, vars.targetlon0, vars.targetroll0)
+		if math.abs(q1:dot(q2)) > .999 then
+			vars.lat0 = vars.targetlat0
+			vars.lon0 = vars.targetlon0
+			vars.roll0 = vars.targetroll0
+		else
+			local q = quatd():slerp(q1, q2, vars.latlonroll0convergeRate)
+			vars.lat0, vars.lon0, vars.roll0 = quatToEuler(q)
+		end
 --]]
 	end
 
