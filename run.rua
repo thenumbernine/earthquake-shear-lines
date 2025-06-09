@@ -1787,7 +1787,9 @@ App.recenterOnQuake = |:|do
 	-- ok this will put our quake at center for Equirectangular ... and maybe spherical and wgs84 ...
 	-- but for Azimuthal I'll need to offset lat0 by 90' ...
 	-- so that means our recenter will need offsets which will need to be linearly weighted by the chart parameters
-	vars.lat0 = eq.latitude
+	-- But adding this means I gotta call "recenterOnQuake" when the chart weights change ...
+	local chartLat0 = vars.weight_Azimuthal_equidistant * 90
+	vars.lat0 = eq.latitude - chartLat0
 	vars.lon0 = eq.longitude
 end
 
@@ -2021,6 +2023,9 @@ App.updateGUI = |:| do
 				if ig.luatableSliderFloat(field, vars, field, 0, 1) then
 					changed = field
 				end
+			end
+			if changed then
+				self:recenterOnQuake()
 			end
 			if vars.normalizeWeights and changed then
 				local restFrac = 1 - vars[changed]
