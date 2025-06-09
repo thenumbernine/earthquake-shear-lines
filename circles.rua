@@ -67,13 +67,12 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 			eq2.circles = {}
 		end
 
-		local oldestEarthquakeIndex = earthquakeWindowStartIndex
 		for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
 			local eq2 = earthquakes[i]
 			local v = eq2.xyznorm
 			-- now do our typical building of great-arcs based on our other angle criteria
 			-- TODO do the building of great-arcs FIRST and then scan PLUS OR MINUS in our time window.
-			for j=oldestEarthquakeIndex,i do
+			for j=earthquakeWindowStartIndex,i-1 do
 				-- TODO filter out repetitive points
 
 				local eq3 = earthquakes[j]
@@ -83,7 +82,7 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 				-- filter out duplicate points for great-arc construction consideration ...
 				if (M.filterDuplicatePointsAngleThreshold or 0) > 0 then
 					local cosAngle = math.cos(math.rad(M.filterDuplicatePointsAngleThreshold))
-					for k=oldestEarthquakeIndex,j-1 do
+					for k=earthquakeWindowStartIndex,j-1 do
 						local v3 = earthquakes[k].xyznorm	 -- spherical
 						-- secant length to angle ...
 						if v3:dot(v2) >= cosAngle then
@@ -121,13 +120,6 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 						eq3.circles[#eq.allCircles] = true
 					end
 				end
-			end
-
-			-- now recalculate the oldest point index t consider (basd on our time window)
-			while oldestEarthquakeIndex < i
-			and eq2.ostime - earthquakes[oldestEarthquakeIndex].ostime > M.prevTimeWindowInDays * dayInSec
-			do
-				oldestEarthquakeIndex+=1
 			end
 		end
 	end)

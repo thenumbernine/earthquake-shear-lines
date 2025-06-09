@@ -12,6 +12,7 @@ local GLGradientTex2D = require 'gl.gradienttex2d'
 local ig = require 'imgui'
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
+local quatd = require 'vec-ffi.quatd'
 local vector = require 'ffi.cpp.vector-lua'
 
 local CLEnv = require 'cl.obj.env'
@@ -260,6 +261,7 @@ local vars = table(
 
 		displayComponent = #displayComponentNames,
 
+		drawAnyPlanets = true,
 		drawPlanets = drawPlanetClasses:mapi(|c|(
 			true, 		-- draw all
 			--c.name == 'sun' or c.name == 'moon',	-- only draw sun and moon
@@ -280,6 +282,10 @@ local vars = table(
 		lat0 = 0,		-- degrees
 		lon0 = -155,	-- degrees
 		roll0 = 0,		-- degrees
+		targetlat0 = 0,
+		targetlon0 = -155,
+		targetroll0 = 0,
+		latlonroll0convergeRate = 0.1,	-- what coefficient to converge every frame
 		recenterOnQuake = false,
 		earthquakeIndex = #earthquakes,
 	}
@@ -360,10 +366,11 @@ local texWrap = {
 	t = gl.GL_CLAMP_TO_BORDER,
 }
 
+App.viewOrthoSize = 1.1
 App.initGL = |:| do
 	App.super.initGL(self)
 	self.view.ortho = true
-	self.view.orthoSize = 3
+	self.view.orthoSize = self.viewOrthoSize
 	-- [=====[ BEGIN CLIP FROM GEOGRAPHIC-CHARTS
 	local vertexes = table()
 	local idivs = 100
@@ -1529,6 +1536,20 @@ local nextDrapCheckTime = timer.getTime() - 1
 App.update = |:| do
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
+	if vars.recenterOnQuake then
+-- [[ LERP - and all the coordinate problems that go with it
+		vars.lat0 = math.mix(vars.lat0, vars.targetlat0, vars.latlonroll0convergeRate)
+		vars.lon0 = math.mix(vars.lon0, vars.targetlon0, vars.latlonroll0convergeRate)
+		vars.roll0 = math.mix(vars.roll0, vars.targetroll0, vars.latlonroll0convergeRate)
+--]]
+--[[ SLERP ... involves some converting to and from euler angles and quaternions ...
+		local q1 = eulerToQuat(lat0, lon0, roll0)
+		local q2 = eulerToQuat(targetlat0, targetlon0, targetroll0)
+		local q = quatd():slerp(q1, q2, vars.latlonroll0convergeRate)
+		vars.lat0, vars.lon0, vars.roll0 = quatToEuler(q)
+--]]
+	end
+
 	local eq = earthquakes![vars.earthquakeIndex]
 
 	-- while we're here, try to remotely download & cache the DRAP image
@@ -1658,7 +1679,7 @@ print("...hasn't been dl'd, dl'ing...")
 			end
 		end
 		gl.glDisable(gl.GL_BLEND)
-		do
+		if vars.drawAnyPlanets then
 			gl.glLineWidth(3)
 			sceneObj.uniforms.angleFade = 1
 			local earthPos = eq.planets[Planets.indexes.earth].pos
@@ -1798,9 +1819,11 @@ App.recenterOnQuake = |:|do
 	-- but for Azimuthal I'll need to offset lat0 by 90' ...
 	-- so that means our recenter will need offsets which will need to be linearly weighted by the chart parameters
 	-- But adding this means I gotta call "recenterOnQuake" when the chart weights change ...
+	-- TODO make an azimuthal with an extra 90' rotate lat that puts 0' lat lon in the middle, so that the center is in the center, 
+	--  then the need for this var will go away and roll will work.
 	local chartLat0 = vars.weight_Azimuthal_equidistant * 90
-	vars.lat0 = eq.latitude - chartLat0
-	vars.lon0 = eq.longitude
+	vars.targetlat0 = eq.latitude - chartLat0
+	vars.targetlon0 = eq.longitude
 end
 
 App.refreshForceBuffer = |:|do
@@ -1973,7 +1996,7 @@ App.updateGUI = |:| do
 				self:refreshForceBuffer()
 			end
 
-			ig.igText'Show Planets: '
+			ig.luatableCheckbox('drawAnyPlanets', vars, 'drawAnyPlanets')
 			for _,planetClass in ipairs(drawPlanetClasses) do
 				ig.igSameLine()
 				ig.luatableTooltipCheckbox('draw '..planetClass.name, vars.drawPlanets, planetClass.name)
@@ -2036,6 +2059,7 @@ App.updateGUI = |:| do
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -180, 180)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
 			ig.luatableSliderFloat('roll0', vars, 'roll0', -180, 180)
+			ig.luatableSliderFloat('latlonroll0convergeRate', vars, 'latlonroll0convergeRate', 0, 1)
 
 			ig.igEndMenu()
 		end
@@ -2124,7 +2148,10 @@ App.updateGUI = |:| do
 
 			ig.igEndMenu()
 		end
-		if ig.igBeginMenu('place='..eq.place) then
+		if ig.igBeginMenu('| mag='..eq.mag
+			..', depth='..eq.depth
+			..', place='..eq.place
+			..', time='..eq.time) then
 			ig.igEndMenu()
 		end
 		ig.igEndMainMenuBar()

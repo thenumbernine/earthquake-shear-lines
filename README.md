@@ -12,6 +12,7 @@ TO PROGRAM:
 - add all that NOAA calcs like geoid etc overlays
 - add live satellite overlays and calculations for gradients of cloud cover ....
 
+- track individual points o the surface / select a quake to trac to show you min-angle-to-geodesic of (like I'm doing for planets already)
 - when creating geodesics, filter out identical pairs to prevent those huge alpha stacking over high-quantity (low-magnitude) areas
 	- make this optional
 - click to select point and geodesic
