@@ -136,9 +136,9 @@ vec2 applyLatLonRoll0(vec2 latlon) {
 	vec2 latcs = vec2exp(latlonroll0.x * M_PI / 180.);
 	vec2 loncs = vec2exp(latlonroll0.y * M_PI / 180.);
 	vec2 rollcs = vec2exp(latlonroll0.z * M_PI / 180.);
-	pos = rotateX(pos, latlonroll0.z * M_PI / 180.);
+	pos = rotateZ(pos, -latlonroll0.y * M_PI / 180.);
 	pos = rotateY(pos, latlonroll0.x * M_PI / 180.);
-	pos = rotateZ(pos, latlonroll0.y * M_PI / 180.);
+	pos = rotateX(pos, latlonroll0.z * M_PI / 180.);
 
 	// chartInv_sphere expects north pole to be z+, prime meridian to be x+
 	pos.zxy = pos.xyz;
@@ -159,9 +159,9 @@ vec2 applyLatLonRoll0Inv(vec2 latlon) {
 	vec2 loncs = vec2exp(latlonroll0.y * M_PI / 180.);
 	vec2 rollcs = vec2exp(latlonroll0.z * M_PI / 180.);
 
-	pos = rotateZ(pos, -latlonroll0.y * M_PI / 180.);
-	pos = rotateY(pos, -latlonroll0.x * M_PI / 180.);
 	pos = rotateX(pos, -latlonroll0.z * M_PI / 180.);
+	pos = rotateY(pos, -latlonroll0.x * M_PI / 180.);
+	pos = rotateZ(pos, latlonroll0.y * M_PI / 180.);
 
 	// chartInv_sphere expects north pole to be z+, prime meridian to be x+
 	pos.zxy = pos.xyz;
@@ -261,14 +261,18 @@ local vars = table(
 		displayComponent = #displayComponentNames,
 
 		drawPlanets = drawPlanetClasses:mapi(|c|(
-			c.name == 'sun' or c.name == 'moon',
+			true, 		-- draw all
+			--c.name == 'sun' or c.name == 'moon',	-- only draw sun and moon
 			c.name
 		)),	-- drawPlanets[name] = true
 		calcPlanets = table.mapi(Planets.planetClasses, |c|(
 			c.name == 'sun' or c.name == 'moon' or c.name == 'earth',
 			c.name
 		)),	-- calcPlanets[name] = true
-		drawPlanetAngles = drawPlanetAngles:mapi(|x|(true,x)),
+		drawPlanetAngles = drawPlanetAngles:mapi(|x|(
+			x == 1 or x == 5 or x == 179,
+			x
+		)),
 		--[=[ TODO
 		drawAxisTorques = true,
 		axisTorquePointSize = 3,
@@ -276,6 +280,7 @@ local vars = table(
 		lat0 = 0,		-- degrees
 		lon0 = -155,	-- degrees
 		roll0 = 0,		-- degrees
+		recenterOnQuake = false,
 		earthquakeIndex = #earthquakes,
 	}
 ):setmetatable(nil)
@@ -1771,6 +1776,19 @@ App.updateEarthquakeIndex = |:| do
 	-- TODO redo circle' touchingindexes to scan both + and - in time by 1 day
 	self:calcQuakeWindowIndexes()
 	self:refreshForceBuffer()
+
+	if vars.recenterOnQuake then
+		self:recenterOnQuake()
+	end
+end
+
+App.recenterOnQuake = |:|do
+	local eq = earthquakes![vars.earthquakeIndex]
+	-- ok this will put our quake at center for Equirectangular ... and maybe spherical and wgs84 ...
+	-- but for Azimuthal I'll need to offset lat0 by 90' ...
+	-- so that means our recenter will need offsets which will need to be linearly weighted by the chart parameters
+	vars.lat0 = eq.latitude
+	vars.lon0 = eq.longitude
 end
 
 App.refreshForceBuffer = |:|do
@@ -1841,6 +1859,38 @@ App.updateGUI = |:| do
 	ig.igSetNextWindowBgAlpha(.3)
 	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
 	if ig.igBeginMainMenuBar() then
+		if ig.igBeginMenu'quakes:' then
+	
+			local changed
+			local oldEarthquakeIndex = vars.earthquakeIndex
+			changed = ig.luatableSliderFloat('earthquakeIndex s', vars, 'earthquakeIndex', 1, #earthquakes)
+			changed = ig.luatableInputInt('earthquakeIndex t', vars, 'earthquakeIndex', 1, #earthquakes) or changed
+			if changed then
+				vars.earthquakeIndex ??= oldEarthquakeIndex	-- if we got bad input then don't crash
+				self:updateEarthquakeIndex()
+			end
+
+			ig.igText('earthquake time = '..eq.time)
+			ig.igText('earthquake julian day = '..eq.julianDay)
+			ig.igText('earthquake magn = '..eq.mag)	-- TODO just a side panel or pop up that shows all the earthquake stats
+			ig.igText('earthquake depth = '..eq.depth)	-- TODO incorporate this into the display somehow ...
+			ig.igText('earthquake place = '..eq.place)
+			ig.igText('earthquake latitude = '..eq.latitude)
+			ig.igText('earthquake longitude = '..eq.longitude)
+			ig.igText('earthquake window start time = '..earthquakes[earthquakeWindowStartIndex].time)
+			ig.igText('earthquake window end time = '..earthquakes[earthquakeWindowEndIndex].time)
+			ig.igText('earthquake window start index = '..earthquakeWindowStartIndex)
+			ig.igText('earthquake window end index = '..earthquakeWindowEndIndex)
+			ig.igText('earthquakes in window = '..(earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1))
+			ig.igText('flares in window = '..(flareWindowEndIndex == 0 and 0 or (flareWindowEndIndex - flareWindowStartIndex + 1)))
+			ig.igText('flare window start time = '..flares[flareWindowStartIndex].time)
+			ig.igText('flare window end time = '..flares[flareWindowEndIndex].time)
+			ig.igText('flare window start index = '..flareWindowStartIndex)
+			ig.igText('flare window end index = '..flareWindowEndIndex)
+
+
+			ig.igEndMenu()
+		end
 		if ig.igBeginMenu'options:' then
 			ig.luatableCheckbox('ortho', self.view, 'ortho')
 			if ig.igButton'reset view' then
@@ -1934,32 +1984,7 @@ App.updateGUI = |:| do
 			ig.luatableCheckbox('drawAxisTorques', vars, 'drawAxisTorques')
 			ig.luatableSliderFloat('axisTorquePointSize', vars, 'axisTorquePointSize', 0, 10)
 			--]=]
-
-			local changed
-			local oldEarthquakeIndex = vars.earthquakeIndex
-			changed = ig.luatableSliderFloat('earthquakeIndex s', vars, 'earthquakeIndex', 1, #earthquakes)
-			changed = ig.luatableInputInt('earthquakeIndex t', vars, 'earthquakeIndex', 1, #earthquakes) or changed
-			if changed then
-				vars.earthquakeIndex ??= oldEarthquakeIndex	-- if we got bad input then don't crash
-				self:updateEarthquakeIndex()
-			end
-
-			ig.igText('earthquake time = '..eq.time)
-			ig.igText('earthquake magn = '..eq.mag)	-- TODO just a side panel or pop up that shows all the earthquake stats
-			ig.igText('earthquake depth = '..eq.depth)	-- TODO incorporate this into the display somehow ...
-			ig.igText('earthquake julian day = '..eq.julianDay)
-			ig.igText('earthquake place = '..eq.place)
-			ig.igText('earthquake window start time = '..earthquakes[earthquakeWindowStartIndex].time)
-			ig.igText('earthquake window end time = '..earthquakes[earthquakeWindowEndIndex].time)
-			ig.igText('earthquake window start index = '..earthquakeWindowStartIndex)
-			ig.igText('earthquake window end index = '..earthquakeWindowEndIndex)
-			ig.igText('earthquakes in window = '..(earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1))
-			ig.igText('flares in window = '..(flareWindowEndIndex == 0 and 0 or (flareWindowEndIndex - flareWindowStartIndex + 1)))
-			ig.igText('flare window start time = '..flares[flareWindowStartIndex].time)
-			ig.igText('flare window end time = '..flares[flareWindowEndIndex].time)
-			ig.igText('flare window start index = '..flareWindowStartIndex)
-			ig.igText('flare window end index = '..flareWindowEndIndex)
-
+			
 			ig.igEndMenu()
 		end
 		if ig.igBeginMenu'circles:' then
@@ -2016,6 +2041,9 @@ App.updateGUI = |:| do
 				end
 			end
 
+			if ig.luatableCheckbox('recenterOnQuake', vars, 'recenterOnQuake') then
+				self:recenterOnQuake()
+			end
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -180, 180)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
 			ig.luatableSliderFloat('roll0', vars, 'roll0', -180, 180)
