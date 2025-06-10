@@ -37,11 +37,13 @@ M.filterDuplicateTouchingArcsAngleThreshold = 0
 
 -- when searching for touching geodesics.
 -- tolerance of how close a quake must be to a previous circle to consider along the geodesic
-M.quakeAlignWithPreviousGeodesicAngleThreshold = .1		-- in degrees ... even searching for 0.1 degree threhsold and all quakes align with previous geodesics of quakes ... these are all in very straight lines ...
---M.quakeAlignWithPreviousGeodesicAngleThreshold = 1	-- in degrees
---M.quakeAlignWithPreviousGeodesicAngleThreshold = 2	-- in degrees
---M.quakeAlignWithPreviousGeodesicAngleThreshold = 5	-- in degrees
---M.quakeAlignWithPreviousGeodesicAngleThreshold = 15	-- in degrees
+-- VERIFY: birthday problem, odds of two things overlapping in a discrete collection: P(x) = 1 - n! / ((n - x)! n^x)
+M.quakeAlignWithPreviousGeodesicAngleThreshold = .1		-- in degrees ... odds of a pair overlapping in 360/0.1=3600 out of a sample size of 70.9 is 50% (odds of finding a geodesic amidst noise: birthday problem for set size of 3600)
+--M.quakeAlignWithPreviousGeodesicAngleThreshold = 1	-- in degrees ... " " 360/1=360 " " 22 is 50% ... so you need to consistetly find geodesics in sets o less than 22 quakes
+--M.quakeAlignWithPreviousGeodesicAngleThreshold = 2	-- in degrees ... " " 360/2=180 " " 17 is 50%
+--M.quakeAlignWithPreviousGeodesicAngleThreshold = 5	-- in degrees ... " " 360/5=72 " " 11 is 50%
+--M.quakeAlignWithPreviousGeodesicAngleThreshold = 10	-- in degrees ... " " 360/10=36 " " 8 is 50%
+--M.quakeAlignWithPreviousGeodesicAngleThreshold = 15	-- in degrees ... " " 360/15=24 " " 7 is 50%
 
 
 -- how far back we want to look when comparing great-arcs
@@ -62,154 +64,155 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 
 	-- calculate all geodesics subject to our criteria
 	eq.allCircles = table()
-	timer('calc circles', ||do
-		for _,eq2 in ipairs(earthquakes) do
-			eq2.circles = {}
+--DEBUG:timer('calc circles', ||do
+	for _,eq2 in ipairs(earthquakes) do
+		eq2.circles = {}
+	end
+
+	for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
+		local eq2 = earthquakes[i]
+		local v = eq2.xyznorm
+		-- now do our typical building of great-arcs based on our other angle criteria
+		-- TODO do the building of great-arcs FIRST and then scan PLUS OR MINUS in our time window.
+		for j=earthquakeWindowStartIndex,i-1 do
+			-- TODO filter out repetitive points
+
+			local eq3 = earthquakes[j]
+			local v2 = eq3.xyznorm	-- spherical
+
+			local dups
+			-- filter out duplicate points for great-arc construction consideration ...
+			if (M.filterDuplicatePointsAngleThreshold or 0) > 0 then
+				local cosAngle = math.cos(math.rad(M.filterDuplicatePointsAngleThreshold))
+				for k=earthquakeWindowStartIndex,j-1 do
+					local v3 = earthquakes[k].xyznorm	 -- spherical
+					-- secant length to angle ...
+					if v3:dot(v2) >= cosAngle then
+						dups = true
+						break
+					end
+				end
+			end
+			if not dups then
+				local torque = v:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
+				local axisLen = torque:length()
+				local axis = torque * (1 / (math.max(axisLen, 1e-15)))
+				local influence = axisLen * 10^eq2.mag * 10^eq3.mag
+				local angle = math.acos(v:dot(v2))
+				if math.rad(M.greatArcAngleMin) < angle and angle < math.rad(M.greatArcAngleMax) then	-- if I weight by cross then that'll make the 0' and 180' angles diminish ... nah, there's still a lot of noise unless I turn down the alpha ... then it's hard to highlight any geodesics ...
+					local a1 = axis
+					local a2 = basisFor(a1):normalize()
+					local a3 = a1:cross(a2)
+					local circle = {
+						axis = axis,
+						axis2 = a2,
+						axis3 = a3,
+						axisLen = axisLen,	-- length of 'axis' before it gets normalized
+						angle = math.pi * .5,
+						indexes = {i, j},
+						-- [[ used for rendering
+						influence = influence,
+						color = vec3d(1, .3, .07),
+						centerPos = (v + v2):normalize(),	-- midpoint between two earthquake lines
+						centerAngle = .5 * angle,			-- half the angle between them
+						--]]
+					}
+
+					eq.allCircles:insert(circle)
+					eq2.circles[#eq.allCircles] = true
+					eq3.circles[#eq.allCircles] = true
+				end
+			end
 		end
+	end
+--DEBUG:end)
+--print('made '..#eq.allCircles..' great-arcs')
 
-		for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
-			local eq2 = earthquakes[i]
-			local v = eq2.xyznorm
-			-- now do our typical building of great-arcs based on our other angle criteria
-			-- TODO do the building of great-arcs FIRST and then scan PLUS OR MINUS in our time window.
-			for j=earthquakeWindowStartIndex,i-1 do
-				-- TODO filter out repetitive points
+	-- now find all geodesics touching each earthquake
+	-- this is slow, 80 seconds... but per quake is 0.1 secons ....
+--DEBUG:timer('find quakes along circles', ||do
+	local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(M.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
+	local cosFilterDuplicateTouchingArcsAngleThreshold = math.cos(math.rad(M.filterDuplicateTouchingArcsAngleThreshold))
 
-				local eq3 = earthquakes[j]
-				local v2 = eq3.xyznorm	-- spherical
+	local v = eq.xyznorm
 
+	-- see how close it is to all other circles on file
+	local touchingCircles = table()
+	for ci=1,#eq.allCircles do
+		local c = assert.index(eq.allCircles, ci)
+
+		-- make sure that the points that formed this great-arc are far from this point
+		local tooCloseToArcGen = c.indexes[1] == earthquakeIndex or c.indexes[2] == earthquakeIndex
+		if not tooCloseToArcGen then
+			for k,ei in ipairs(c.indexes) do
+				local cosAngle = earthquakes[ei].xyznorm:dot(v)
+				if cosAngle > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
+					tooCloseToArcGen = true
+					break
+				end
+			end
+		end
+		if not tooCloseToArcGen then
+			-- if we were right on the plane then we would be right at 90' with the axis.
+			-- see how far the angle we make with the axis is from 90'
+			local cosAngleFromAxis = c.axis:dot(v)	-- cos angle from axis = sine angle from rotation plane
+			local angleFromAxis = math.acos(cosAngleFromAxis)
+			local angleFromArc = angleFromAxis - .5 * math.pi
+			local angleFromArcInDeg = math.abs(math.deg(angleFromArc))
+			if angleFromArcInDeg < M.quakeAlignWithPreviousGeodesicAngleThreshold then
+				-- if a previous great-arc was already associated with this point and it is close enough to the current great-arc then skip the current one (uniques only)
 				local dups
-				-- filter out duplicate points for great-arc construction consideration ...
-				if (M.filterDuplicatePointsAngleThreshold or 0) > 0 then
-					local cosAngle = math.cos(math.rad(M.filterDuplicatePointsAngleThreshold))
-					for k=earthquakeWindowStartIndex,j-1 do
-						local v3 = earthquakes[k].xyznorm	 -- spherical
-						-- secant length to angle ...
-						if v3:dot(v2) >= cosAngle then
+				if (M.filterDuplicateTouchingArcsAngleThreshold or 0) > 0 then
+					for ci2=1,ci-1 do
+						local c2 = eq.allCircles[ci2]
+						if math.abs(c.axis:dot(c2.axis)) > cosFilterDuplicateTouchingArcsAngleThreshold then
 							dups = true
 							break
 						end
 					end
 				end
 				if not dups then
-					local torque = v:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
-					local axisLen = torque:length()
-					local axis = torque * (1 / (math.max(axisLen, 1e-15)))
-					local influence = axisLen * 10^eq2.mag * 10^eq3.mag
-					local angle = math.acos(v:dot(v2))
-					if math.rad(M.greatArcAngleMin) < angle and angle < math.rad(M.greatArcAngleMax) then	-- if I weight by cross then that'll make the 0' and 180' angles diminish ... nah, there's still a lot of noise unless I turn down the alpha ... then it's hard to highlight any geodesics ...
-						local a1 = axis
-						local a2 = basisFor(a1):normalize()
-						local a3 = a1:cross(a2)
-						local circle = {
-							axis = axis,
-							axis2 = a2,
-							axis3 = a3,
-							angle = math.pi * .5,
-							indexes = {i, j},
-							-- [[ used for rendering
-							influence = influence,
-							color = vec3d(1, .3, .07),
-							centerPos = (v + v2):normalize(),	-- midpoint between two earthquake lines
-							centerAngle = .5 * angle,			-- half the angle between them
-							--]]
-						}
-
-						eq.allCircles:insert(circle)
-						eq2.circles[#eq.allCircles] = true
-						eq3.circles[#eq.allCircles] = true
-					end
+					-- TODO take note (or even filter?) based on the angle distance between us and the prevoius points that it took to form this geodesic?
+					-- what if all new quakes happen to be along geodesics but >90' of old geodesic points? (or whatever our geodesic creation angle criteria is)
+					touchingCircles:insert{
+						circle = c,
+						angleFromArcInDeg = angleFromArcInDeg,
+					}
 				end
 			end
 		end
-	end)
---print('made '..#eq.allCircles..' great-arcs')
+	end
+	eq.touchingCircles = touchingCircles:sort(|ta,tb| ta.angleFromArcInDeg < tb.angleFromArcInDeg)
 
-	-- now find all geodesics touching each earthquake
-	-- this is slow, 80 seconds... but per quake is 0.1 secons ....
-	timer('find quakes along circles', ||do
-		local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(M.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
-		local cosFilterDuplicateTouchingArcsAngleThreshold = math.cos(math.rad(M.filterDuplicateTouchingArcsAngleThreshold))
+	--[=[ collect unique points to all circles of this point
+	local uniquePointIndexes = {}
+	uniquePointIndexes[i] = true
+	for _,t in ipairs(touchingCircles) do
+		local c = t.circle
+		uniquePointIndexes[c.indexes[1]] = true
+		uniquePointIndexes[c.indexes[2]] = true
+	end
+	eq.uniquePointIndexes = uniquePointIndexes	-- do I need a list of all points that are on all circles that are touching this point? or nah?
+	--]=]
 
-		local v = eq.xyznorm
 
-		-- see how close it is to all other circles on file
-		local touchingCircles = table()
-		for ci=1,#eq.allCircles do
-			local c = assert.index(eq.allCircles, ci)
-
-			-- make sure that the points that formed this great-arc are far from this point
-			local tooCloseToArcGen = c.indexes[1] == earthquakeIndex or c.indexes[2] == earthquakeIndex
-			if not tooCloseToArcGen then
-				for k,ei in ipairs(c.indexes) do
-					local cosAngle = earthquakes[ei].xyznorm:dot(v)
-					if cosAngle > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
-						tooCloseToArcGen = true
-						break
-					end
-				end
-			end
-			if not tooCloseToArcGen then
-				-- if we were right on the plane then we would be right at 90' with the axis.
-				-- see how far the angle we make with the axis is from 90'
-				local cosAngleFromAxis = c.axis:dot(v)	-- cos angle from axis = sine angle from rotation plane
+	eq.minAngleForPlanets = range(#Planets.planetClasses):mapi(||180)
+	for _,t in ipairs(eq.touchingCircles) do
+		t.angleForPlanets = range(#Planets.planetClasses):mapi(||180)
+		local c = t.circle
+		for pi,p in ipairs(eq.planets) do
+			if p.name ~= 'earth' then
+				local planetDir = (p.pos - eq.planets[eq.planets.indexes.earth].pos):normalize()
+				local cosAngleFromAxis = c.axis:dot(planetDir)	-- cos angle from axis = sine angle from plane
 				local angleFromAxis = math.acos(cosAngleFromAxis)
 				local angleFromArc = angleFromAxis - .5 * math.pi
-				local angleFromArcInDeg = math.abs(math.deg(angleFromArc))
-				if angleFromArcInDeg < M.quakeAlignWithPreviousGeodesicAngleThreshold then
-					-- if a previous great-arc was already associated with this point and it is close enough to the current great-arc then skip the current one (uniques only)
-					local dups
-					if (M.filterDuplicateTouchingArcsAngleThreshold or 0) > 0 then
-						for ci2=1,ci-1 do
-							local c2 = eq.allCircles[ci2]
-							if math.abs(c.axis:dot(c2.axis)) > cosFilterDuplicateTouchingArcsAngleThreshold then
-								dups = true
-								break
-							end
-						end
-					end
-					if not dups then
-						-- TODO take note (or even filter?) based on the angle distance between us and the prevoius points that it took to form this geodesic?
-						-- what if all new quakes happen to be along geodesics but >90' of old geodesic points? (or whatever our geodesic creation angle criteria is)
-						touchingCircles:insert{
-							circle = c,
-							angleFromArcInDeg = angleFromArcInDeg,
-						}
-					end
-				end
+				t.angleForPlanets[pi] = math.abs(math.deg(angleFromArc))	-- will be 0 to 90
+				--planetAngleFromGeodesics[pi][math.ceil(angleFromArc)] += 1
+				eq.minAngleForPlanets[pi] = math.min(eq.minAngleForPlanets[pi], t.angleForPlanets[pi])
 			end
 		end
-		eq.touchingCircles = touchingCircles:sort(|ta,tb| ta.angleFromArcInDeg < tb.angleFromArcInDeg)
-
-		--[=[ collect unique points to all circles of this point
-		local uniquePointIndexes = {}
-		uniquePointIndexes[i] = true
-		for _,t in ipairs(touchingCircles) do
-			local c = t.circle
-			uniquePointIndexes[c.indexes[1]] = true
-			uniquePointIndexes[c.indexes[2]] = true
-		end
-		eq.uniquePointIndexes = uniquePointIndexes	-- do I need a list of all points that are on all circles that are touching this point? or nah?
-		--]=]
-
-
-		eq.minAngleForPlanets = range(#Planets.planetClasses):mapi(||180)
-		for _,t in ipairs(eq.touchingCircles) do
-			t.angleForPlanets = range(#Planets.planetClasses):mapi(||180)
-			local c = t.circle
-			for pi,p in ipairs(eq.planets) do
-				if p.name ~= 'earth' then
-					local planetDir = (p.pos - eq.planets[eq.planets.indexes.earth].pos):normalize()
-					local cosAngleFromAxis = c.axis:dot(planetDir)	-- cos angle from axis = sine angle from plane
-					local angleFromAxis = math.acos(cosAngleFromAxis)
-					local angleFromArc = angleFromAxis - .5 * math.pi
-					t.angleForPlanets[pi] = math.abs(math.deg(angleFromArc))	-- will be 0 to 90
-					--planetAngleFromGeodesics[pi][math.ceil(angleFromArc)] += 1
-					eq.minAngleForPlanets[pi] = math.min(eq.minAngleForPlanets[pi], t.angleForPlanets[pi])
-				end
-			end
-		end
-	end)
+	end
+--DEBUG:end)
 
 -- how about instead of calc'ing angle from *all* pairs
 -- how about, for an earthquke, just see if the sun is within *any* geodesics

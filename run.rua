@@ -26,6 +26,7 @@ local basisFor = require 'basis'.basisFor
 local charts = require 'charts'.charts
 local chartCode = require 'charts'.chartCode
 local chartCNames = require 'charts'.chartCNames
+local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
 
 local getDayCache = require 'earthquakes'.getDayCache
 local checkTime = require 'earthquakes'.checkTime
@@ -61,7 +62,7 @@ chartCode ..= [[
 // TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
 vec3 cartesianToLatLonWGS84(vec3 pos) {
 	// lowercase WGS84_a is in km, uppercase WGS84_a is in m ... i know i need to fix this ...
-	pos *= WGS84_a;	// convert from semimajor-axis units to km
+	pos *= WGS84_a;	// convert from semimajor-axis units to m
 	float modified_b = pos.z < 0. ? -WGS84_b : WGS84_b;
 	float r = length(pos.xy);
 
@@ -275,10 +276,8 @@ local vars = table(
 			x == 1 or x == 5 or x == 179,
 			x
 		)),
-		--[=[ TODO
 		drawAxisTorques = true,
 		axisTorquePointSize = 3,
-		--]=]
 		lat0 = 0,		-- degrees
 		lon0 = -155,	-- degrees
 		roll0 = 0,		-- degrees
@@ -335,7 +334,7 @@ App.calcQuakeWindowIndexes = |:|do
 		--and return the window's "allCircles", which I will store here
 		-- now reclaculate all circles within our window
 		calcCircles.calcCircles(earthquakes, vars.earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex)
-	
+
 		-- should this be based on what quakes are within 60' and caused me to flag the geodesic?
 		-- or should this be on what quakes are subsequently within 1' or 5' or so of that geodesic after-the-fact?
 		-- doing the former first ...
@@ -357,6 +356,15 @@ App.invalidateCachedQuakeArcs = |:|do
 		eq.touchingCircles = nil
 		eq.circlesMadeByQuakes = nil
 	end
+
+-- [[ trying to calculate odds
+	self.totalLikelihood = nil
+	self.oddsTrue = nil
+	self.oddsFalse = nil
+	for _,eq in ipairs(earthquakes) do
+		eq.probabilityOfFindingAnyGeodesic = nil
+	end
+--]]
 end
 
 
@@ -796,29 +804,22 @@ require 'vec-ffi.vec2i'	-- time
 
 	local numCircleDivs = 200
 	self.circlesObj = GLSceneObject{
-		-- TODO geometry shader the resolution? or can they even spit out that many vertexes?
-		vertexes = {
-			dim = 1,
-			data = range(numCircleDivs):mapi(|i| (i-.5)/numCircleDivs),
-		},
-		geometry = {
-			mode = gl.GL_LINE_LOOP,
-		},
 		program = {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
 layout(location=0) in float vertex;
+
+in vec3 axis, axis2, axis3;	// axis dual = basis of circle
+in vec3 color;	// base color
+in float influence;	// additive influence,
+in vec4 centerPos;	// .w = cos(centerAngle)
+
 out vec3 posv;
 out vec4 colorv;
 
-uniform vec3 color;	// base color
-uniform vec3 axis, axis2, axis3;	// axis dual = basis of circle
 uniform float declinationFromAxis;	// ... in radians
-uniform float influence;	// additive influence,
 uniform float angleFade;	// how much to fade out from the centerPos / centerAngle
-uniform vec4 centerPos;	// .w = cos(centerAngle)
-
 
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
@@ -914,6 +915,60 @@ void main() {
 }
 ]],
 		},
+		-- TODO geometry shader the resolution? or can they even spit out that many vertexes?
+		vertexes = {
+			dim = 1,
+			usage = gl.GL_STATIC_DRAW,
+			data = (|n| range(n):mapi(|i| (i-.5)/n))(numCircleDivs),
+		},
+		geometry = {
+			mode = gl.GL_LINE_LOOP,
+			count = numCircleDivs,
+		},
+		attrs = {
+			axis = {
+				divisor = 1,
+				buffer = {
+					dim = 3,
+					useVec = true,
+				},
+			},
+			axis2 = {
+				divisor = 1,
+				buffer = {
+					dim = 3,
+					useVec = true,
+				},
+			},
+			axis3 = {
+				divisor = 1,
+				buffer = {
+					dim = 3,
+					useVec = true,
+				},
+			},
+			color = {
+				divisor = 1,
+				buffer = {
+					dim = 3,
+					useVec = true,
+				},
+			},
+			influence = {
+				divisor = 1,
+				buffer = {
+					dim = 1,
+					useVec = true,
+				},
+			},
+			centerPos = {
+				divisor = 1,
+				buffer = {
+					dim = 4,
+					useVec = true,
+				},
+			},
+		},
 	}
 
 
@@ -921,14 +976,14 @@ void main() {
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
 
-	--[=[ build here
+	-- [=[ build here
 	-- show axii of circles
 	self.pairCrossPointsObj = GLSceneObject{
 		program = {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
-layout(location=0) in vec2 vertex;
+layout(location=0) in vec3 vertex;
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
 uniform vec3 latlonroll0;
@@ -936,13 +991,13 @@ uniform vec3 latlonroll0;
 <?=chartCode?>
 
 void main() {
-	vec2 vtxofs = applyLatLonRoll0(vertex);
+	vec2 vtxofs = applyLatLonRoll0(vertex.xy);
 
 	//////// BEGIN CODE MATCHING CHART CODE ABOVE
 	vec3 coords = vec3(
-		mod(vtxofs.x + 90.., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vtxofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
 		mod(vtxofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
-		2e+3);						// height in meters
+		vertex.z);							// height in meters
 
 	vec3 pos = 0.
 <? for _,name in ipairs(chartCNames) do
@@ -958,7 +1013,6 @@ void main() {
 	}
 	gl_Position = mvProjMat * vec4(pos, 1.);
 	//////// END CODE MATCHING CHART CODE ABOVE
-
 }
 ]],			{
 				chartCode = chartCode,
@@ -979,49 +1033,6 @@ void main() {
 			useVec = true,
 		},
 	}
-
-	local pairCrossPoints = self.pairCrossPointsObj.attrs.vertex.buffer.vec
-	circles = table()
-	for i1=1,#earthquakes-1 do
-		local e1 = earthquakes[i1]
-		for i2=i1+1,#earthquakes do
-			local e2 = earthquakes[i2]
-			local v1 = latLonToXYZ(e1)
-			local v2 = latLonToXYZ(e2)
-			local torque = v1:cross(v2)	-- TODO times pair of earthquake magnitudes or something?
-			local axisLen = torque:length()
-			local axis = torque * (1 / (math.max(axisLen, 1e-15)))
-			local influence = axisLen * 10^e1.mag * 10^e2.mag
-			-- hmm proper torque would be based on radius from earth ... so consider depth?
-
-			-- hmmmmm
-			-- if ponits are 180' or if they are next to each other then we want no infuence ...
-			-- ... .maybe I souldn't nrmlize with the cross produt ...
-			-- and then I should look at the point-cloud of the axis' ...
-			for s=-1,1,2 do
-				local x,y,z = (s * torque):unpack()
-				local phi, lambda = cartesianToLatLonWGS84(z,x,y)	-- hmm ...
-				pairCrossPoints:insert((((math.deg(phi) + 90) / 180) % 1) * 180 - 90)
-				pairCrossPoints:insert((((math.deg(lambda) + 180) / 360) % 1) * 360 - 180)
-			end
-
-			local angle = math.acos(v1:dot(v2))
-			--if math.rad(15) < angle and angle < math.rad(60) then		-- threshold angle for point pairs for inserting a great-arc
-			if math.rad(10) < angle and angle < math.rad(90) then	-- if I weight by cross then that'll make the 0' and 180' angles diminish ... nah, there's still a lot of noise unless I turn down the alpha ... then it's hard to highlight any geodesics ...
-				circles:insert{
-					axis = axis,
-					angle = math.pi * .5,
-					color = vec3d(1, .3, .07) * influence,
-					centerPos = (v1 + v2):normalize(),	-- midpoint between two earthquake lines
-					centerAngle = .5 * angle,	-- half the angle between them
-				}
-			end
-		end
-	end
-	self.pairCrossPointsObj:endUpdate()
-	--]=]
-	--[=[ or TODO all circles and just hide/show the ones associated with the current quake ...
-	circles = allCircles
 	--]=]
 
 
@@ -1528,6 +1539,95 @@ App.refreshVisibleCircles = |:| do
 		end
 		circles = circleIndexes:keys():sort():mapi(|ci| eq.allCircles[ci])
 	end
+
+	-- [[ update the circles
+	do
+		local axisGPU = self.circlesObj.attrs.axis.buffer
+		local axisCPU = axisGPU:beginUpdate()
+		local axis2GPU = self.circlesObj.attrs.axis2.buffer
+		local axis2CPU = axis2GPU:beginUpdate()
+		local axis3GPU = self.circlesObj.attrs.axis3.buffer
+		local axis3CPU = axis3GPU:beginUpdate()
+		local colorGPU = self.circlesObj.attrs.color.buffer
+		local colorCPU = colorGPU:beginUpdate()
+		local influenceGPU = self.circlesObj.attrs.influence.buffer
+		local influenceCPU = influenceGPU:beginUpdate()
+		local centerPosGPU = self.circlesObj.attrs.centerPos.buffer
+		local centerPosCPU = centerPosGPU:beginUpdate()
+
+		for _,c in ipairs(circles) do
+			axisCPU:emplace_back():set(c.axis:unpack())
+			axis2CPU:emplace_back():set(c.axis2:unpack())
+			axis3CPU:emplace_back():set(c.axis3:unpack())
+			local t1 = earthquakes[c.indexes[1]].ostime
+			local t2 = earthquakes[c.indexes[2]].ostime
+			local tavg = (t1 + t2) >> 1
+			if tavg < eq.ostime then
+				colorCPU:emplace_back():set(c.color.x, 0, 0)
+			else
+				colorCPU:emplace_back():set(0, c.color.y, 0)
+			end
+			influenceCPU:emplace_back()[0] = c.influence
+			centerPosCPU:emplace_back():set(
+				c.centerPos.x,
+				c.centerPos.y,
+				c.centerPos.z,
+				1. / math.cos(c.centerAngle)
+			)
+		end
+
+		self.circlesObjInstanceCount = #axisCPU
+
+		-- last, make room for each planet, for each angle, for if we draw it
+		local earthPos = eq.planets[Planets.indexes.earth].pos
+		for _,planetClass in ipairs(drawPlanetClasses) do
+			for _,declAngle in ipairs(drawPlanetAngles) do
+				local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
+				local planetDir = (planetPos - earthPos):normalize()
+				local axis2 = basisFor(planetDir)
+				local axis3 = planetDir:cross(axis2)
+				axisCPU:emplace_back():set(planetDir:unpack())
+				axis2CPU:emplace_back():set(axis2:unpack())
+				axis3CPU:emplace_back():set(axis3:unpack())
+				colorCPU:emplace_back():set(table.unpack(planetClass.color))
+				influenceCPU:emplace_back()[0] = 1
+				centerPosCPU:emplace_back():set(0,0,0,1)
+			end
+		end
+
+		axisGPU:endUpdate()
+		axis2GPU:endUpdate()
+		axis3GPU:endUpdate()
+		colorGPU:endUpdate()
+		influenceGPU:endUpdate()
+		centerPosGPU:endUpdate()
+	end
+	--]]
+
+	-- TODO FIXME where are these points going?
+	-- [=[ now that we've refreshed the circles, refresh our torque axis points too
+	local pairCrossPoints = self.pairCrossPointsObj.attrs.vertex.buffer.vec
+--print('building points from ',#circles, 'circles')
+	for _,c in ipairs(circles) do
+		local torque = c.axis * c.axisLen
+		-- hmm proper torque would be based on radius from earth ... so consider depth?
+		-- hmmmmm
+		-- if points are 180' or if they are next to each other then we want no infuence ...
+		-- ... .maybe I souldn't nrmlize with the cross produt ...
+		-- and then I should look at the point-cloud of the axis' ...
+		for s=-1,1,2 do
+			local x,y,z = (s * torque):unpack()
+			z,x,y = x,y,z	-- hmm ...
+			-- and cartesianToLatLonWGS84 scales it up by WGS84.a ... hmm why
+			local phi, lambda, height = cartesianToLatLonWGS84(x,y,z)
+			pairCrossPoints:insert((((math.deg(phi) + 90) / 180) % 1) * 180 - 90)
+			pairCrossPoints:insert((((math.deg(lambda) + 180) / 360) % 1) * 360 - 180)
+--print('point', i, 'axisLen', c.axisLen, 'height', height) -- / charts.WGS84.a
+			pairCrossPoints:insert(height)	--  in meters
+		end
+	end
+	self.pairCrossPointsObj:endUpdate()
+	--]=]
 end
 
 --[[
@@ -1587,6 +1687,40 @@ drapPath:mkdir()
 local nextDrapCheckTime = timer.getTime() - 1
 App.update = |:| do
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+
+-- [[
+	self.totalLikelihood = self.totalLikelihood or 1
+	self.oddsTrue = self.oddsTrue or 0
+	self.oddsFalse = self.oddsFalse or 0
+	-- TODO this is the odds of 2 (or more) matching.  we should calc the odds of the number of matches that we actually got.
+	local probsForEqSetSize = require 'birthday-problem'[calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold]
+	if probsForEqSetSize then
+		local eq = earthquakes[vars.earthquakeIndex]
+		if not eq.probabilityOfFindingAnyGeodesic then
+			local numQuakesInWindow = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
+			eq.probabilityOfFindingAnyGeodesic = probsForEqSetSize[numQuakesInWindow] or 1
+			print(
+				eq.probabilityOfFindingAnyGeodesic
+				..' = odds of finding a geodesic within '..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold
+				..'° (i.e. '
+				..(360/calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold)
+				..' partitions) from '..numQuakesInWindow
+				..' possible quakes, and we found '
+				..#eq.touchingCircles
+			)
+			if #eq.touchingCircles > 0 then
+				self.totalLikelihood *= eq.probabilityOfFindingAnyGeodesic
+				self.oddsTrue += 1
+			else
+				self.totalLikelihood *= 1 - eq.probabilityOfFindingAnyGeodesic
+				self.oddsFalse += 1
+			end
+			--print('...running total likelihood = '..self.totalLikelihood)	-- TODO i think this odds is the order-dependent odds of events happening, but I should be looking at order-independence or something, idk, i hate probability and statistics
+			print('...so far we have found geodesics '..self.oddsTrue..' of '..(self.oddsTrue + self.oddsFalse)..' times = '..(self.oddsTrue / (self.oddsTrue + self.oddsFalse)))
+		end
+	end
+--]]
+
 
 	if vars.recenterOnQuake then
 --[[ LERP - and all the coordinate problems that go with it
@@ -1719,48 +1853,30 @@ print("...hasn't been dl'd, dl'ing...")
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.alpha = vars.greatArcAlpha
 		if vars.drawGreatArcs then
-			for _,c in ipairs(circles) do
-				local t1 = earthquakes[c.indexes[1]].ostime
-				local t2 = earthquakes[c.indexes[2]].ostime
-				local tavg = (t1 + t2) >> 1
-				if tavg < eq.ostime then
-					sceneObj.uniforms.color = {c.color.x, 0, 0}
-				else
-					sceneObj.uniforms.color = {0, c.color.y, 0}
-				end
-				sceneObj.uniforms.axis = {c.axis:unpack()}
-				sceneObj.uniforms.axis2 = {c.axis2:unpack()}
-				sceneObj.uniforms.axis3 = {c.axis3:unpack()}
-				sceneObj.uniforms.influence = c.influence
-				sceneObj.uniforms.centerPos = {c.centerPos.x, c.centerPos.y, c.centerPos.z, 1. / math.cos(c.centerAngle)}
-				sceneObj:draw()
-			end
+			sceneObj.geometry.instanceCount = self.circlesObjInstanceCount
+			sceneObj:draw()
 		end
 		gl.glDisable(gl.GL_BLEND)
 		if vars.drawAnyPlanets then
+			sceneObj.geometry.instanceCount = 1
 			gl.glLineWidth(3)
 			sceneObj.uniforms.angleFade = 1
 			local earthPos = eq.planets[Planets.indexes.earth].pos
-			for _,planetClass in ipairs(drawPlanetClasses) do
+			for planetClassIndex,planetClass in ipairs(drawPlanetClasses) do
 				if vars.drawPlanets[planetClass.name] then
-					for _,declAngle in ipairs(drawPlanetAngles) do
+					for declAngleIndex,declAngle in ipairs(drawPlanetAngles) do
 						if vars.drawPlanetAngles[declAngle] then
-							local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
-							local planetDir = (planetPos - earthPos):normalize()
-							local axis2 = basisFor(planetDir)
-							local axis3 = planetDir:cross(axis2)
 							sceneObj.uniforms.declinationFromAxis = math.rad(declAngle)
-							sceneObj.uniforms.color = planetClass.color
-							sceneObj.uniforms.axis = {planetDir:unpack()}
-							sceneObj.uniforms.axis2 = {axis2:unpack()}
-							sceneObj.uniforms.axis3 = {axis3:unpack()}
-							sceneObj.uniforms.influence = 1
-							sceneObj.uniforms.centerPos = {0,0,0,1}
+							sceneObj.geometry.instanceOffset = self.circlesObjInstanceCount
+								+ (declAngleIndex - 1)
+								+ (planetClassIndex - 1) * #drawPlanetAngles
 							sceneObj:draw()
 						end
 					end
 				end
 			end
+			sceneObj.geometry.instanceCount = nil
+			sceneObj.geometry.instanceOffset = nil
 		end
 		gl.glDepthMask(1)
 		gl.glLineWidth(1)
@@ -1826,7 +1942,7 @@ print("...hasn't been dl'd, dl'ing...")
 		gl.glDepthFunc(gl.GL_LESS)
 	end
 
-	--[=[ TODO show torque axii of circle geodesics
+	-- [=[ TODO show torque axii of circle geodesics
 	if vars.drawAxisTorques then
 		local sceneObj = self.pairCrossPointsObj
 		if #sceneObj.attrs.vertex.buffer.vec > 0 then
@@ -1877,7 +1993,7 @@ App.recenterOnQuake = |:|do
 	-- but for Azimuthal I'll need to offset lat0 by 90' ...
 	-- so that means our recenter will need offsets which will need to be linearly weighted by the chart parameters
 	-- But adding this means I gotta call "recenterOnQuake" when the chart weights change ...
-	-- TODO make an azimuthal with an extra 90' rotate lat that puts 0' lat lon in the middle, so that the center is in the center, 
+	-- TODO make an azimuthal with an extra 90' rotate lat that puts 0' lat lon in the middle, so that the center is in the center,
 	--  then the need for this var will go away and roll will work.
 	local chartLat0 = vars.weight_Azimuthal_equidistant * 90
 	vars.targetlat0 = eq.latitude - chartLat0
@@ -1953,7 +2069,7 @@ App.updateGUI = |:| do
 	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
 	if ig.igBeginMainMenuBar() then
 		if ig.igBeginMenu'quakes:' then
-	
+
 			local changed
 			local oldEarthquakeIndex = vars.earthquakeIndex
 			changed = ig.luatableSliderFloat('earthquakeIndex s', vars, 'earthquakeIndex', 1, #earthquakes)
@@ -1974,7 +2090,21 @@ App.updateGUI = |:| do
 			ig.igText('earthquake window end time = '..earthquakes[earthquakeWindowEndIndex].time)
 			ig.igText('earthquake window start index = '..earthquakeWindowStartIndex)
 			ig.igText('earthquake window end index = '..earthquakeWindowEndIndex)
-			ig.igText('earthquakes in window = '..(earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1))
+			local numQuakesInWindow = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
+			ig.igText('earthquakes in window = '..numQuakesInWindow)
+
+			local probsForEqSetSize = require 'birthday-problem'[calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold]
+			if probsForEqSetSize then
+				ig.igText(
+					(probsForEqSetSize[numQuakesInWindow] or 1)
+					..' = odds of finding a geodesic within '..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold
+					..'° (i.e. '
+					..(360/calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold)
+					..' partitions) from '..numQuakesInWindow..' possible quakes'
+				)
+			end
+
+			-- hr --
 			ig.igText('flares in window = '..(flareWindowEndIndex == 0 and 0 or (flareWindowEndIndex - flareWindowStartIndex + 1)))
 			ig.igText('flare window start time = '..flares[flareWindowStartIndex].time)
 			ig.igText('flare window end time = '..flares[flareWindowEndIndex].time)
@@ -2073,11 +2203,9 @@ App.updateGUI = |:| do
 				self:refreshVisibleCircles()
 			end
 
-			--[=[ TODO
 			ig.luatableCheckbox('drawAxisTorques', vars, 'drawAxisTorques')
 			ig.luatableSliderFloat('axisTorquePointSize', vars, 'axisTorquePointSize', 0, 10)
-			--]=]
-			
+
 			ig.igEndMenu()
 		end
 		if ig.igBeginMenu'chart:' then
@@ -2156,7 +2284,7 @@ App.updateGUI = |:| do
 
 			ig.igEndMenu()
 		end
-		
+
 		if ig.igBeginMenu('touching '..#eq.touchingCircles) then
 			for i,t in ipairs(eq.touchingCircles) do
 				ig.igPushID_Int(i)
