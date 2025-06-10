@@ -1545,6 +1545,11 @@ App.refreshVisibleCircles = |:| do
 		circles = circleIndexes:keys():sort():mapi(|ci| eq.allCircles[ci])
 	end
 
+	-- invalidate track objs' min angle to selected earthquake, cuz they are based on 'circles'
+	for _,track in ipairs(self.trackEarthquakeIndexes) do
+		track.minAngle = nil
+	end
+
 	-- [[ update the circles
 	do
 		local axisGPU = self.circlesObj.attrs.axis.buffer
@@ -2357,8 +2362,8 @@ App.updateGUI = |:| do
 				if not track.minAngle then
 					-- find the min angle from this track object to our current selected earthquake
 					track.minAngle = 180
-					for _,t in ipairs(eq.touchingCircles) do
-						local cosAngleFromAxis = t.circle.axis:dot(eq2.xyznorm)	-- cos angle from axis = sine angle from plane
+					for _,c in ipairs(circles) do
+						local cosAngleFromAxis = c.axis:dot(eq2.xyznorm)	-- cos angle from axis = sine angle from plane
 						local angleFromAxis = math.acos(cosAngleFromAxis)
 						local angleFromArc = angleFromAxis - .5 * math.pi
 						local angleFromArcInDeg = math.abs(math.deg(angleFromArc))	-- will be 0 to 90
