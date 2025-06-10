@@ -287,6 +287,8 @@ local vars = table(
 		latlonroll0convergeRate = 0.1,	-- what coefficient to converge every frame
 		recenterOnQuake = false,
 		earthquakeIndex = #earthquakes,
+
+		trackEarthquakeIndex = -1,
 	}
 ):setmetatable(nil)
 
@@ -377,6 +379,7 @@ local texWrap = {
 App.viewOrthoSize = 1.1
 App.initGL = |:| do
 	App.super.initGL(self)
+
 	self.view.ortho = true
 	self.view.orthoSize = self.viewOrthoSize
 	-- [=====[ BEGIN CLIP FROM GEOGRAPHIC-CHARTS
@@ -1513,6 +1516,8 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 	):unbind()
 	self.globeObj.texs[3] = self.gradientTex
 
+	self.trackEarthquakeIndexes = table()
+
 	self:updateEarthquakeIndex()
 end
 
@@ -1978,6 +1983,11 @@ end
 App.updateEarthquakeIndex = |:| do
 	vars.earthquakeIndex = math.clamp(math.round(vars.earthquakeIndex), 1, #earthquakes)
 
+	-- invalidate track objs' min angle to selected earthquake
+	for _,track in ipairs(self.trackEarthquakeIndexes) do
+		track.minAngle = nil
+	end
+
 	-- TODO redo circle' touchingindexes to scan both + and - in time by 1 day
 	self:calcQuakeWindowIndexes()
 	self:refreshForceBuffer()
@@ -2319,20 +2329,63 @@ App.updateGUI = |:| do
 
 			ig.igEndMenu()
 		end
-		if ig.igBeginMenu'planets:' then
+		if ig.igBeginMenu'angles:' then	-- angles to planets or other objects
 
 			local earthPos = eq.planets[Planets.indexes.earth].pos
 			for _,cl in ipairs(drawPlanetClasses) do	-- planets without earth (nan angle) and EM_Bary (same angle as moon)
 				local planetIndex = Planets.indexes[cl.name]
 				local planet = eq.planets[planetIndex]
 				local planetDir = (planet.pos - earthPos):normalize()
-				ig.igText(planet.name..' 3D angle: '..math.deg(math.acos(
+				ig.igText('3D angle: '..math.deg(math.acos(
 					eq.xyznorm:dot(planetDir)
 				))..'°, 2D angle: '..math.deg(
 					((math.atan2(planetDir.y, planetDir.x) - math.atan2(eq.xyznorm.y, eq.xyznorm.x) + math.pi) % (2 * math.pi)) - math.pi
 				)..'°, angle to closest touching geodesic: '
-					..eq.minAngleForPlanets[planetIndex]..'°')
+					..eq.minAngleForPlanets[planetIndex]
+				..'° | '..planet.name)
 			end
+
+			if inputText('trackEarthquakeIndex', vars, 'trackEarthquakeIndex') then
+				self.trackEarthquakeIndexes:insert{
+					index = vars.trackEarthquakeIndex,
+				}
+			end
+
+			ig.igPushID_Str'trackEarthquakeIndexes_list'
+			for ii,track in ipairs(self.trackEarthquakeIndexes) do
+				local eq2 = earthquakes[track.index]
+				if not track.minAngle then
+					-- find the min angle from this track object to our current selected earthquake
+					track.minAngle = 180
+					for _,t in ipairs(eq.touchingCircles) do
+						local cosAngleFromAxis = t.circle.axis:dot(eq2.xyznorm)	-- cos angle from axis = sine angle from plane
+						local angleFromAxis = math.acos(cosAngleFromAxis)
+						local angleFromArc = angleFromAxis - .5 * math.pi
+						local angleFromArcInDeg = math.abs(math.deg(angleFromArc))	-- will be 0 to 90
+						--planetAngleFromGeodesics[pi][math.ceil(angleFromArc)] += 1
+						track.minAngle = math.min(track.minAngle, angleFromArcInDeg)
+					end
+				end
+
+				ig.igPushID_Int(ii)
+
+				if ig.igButton'x' then
+					self.trackEarthquakeIndexes:remove(ii)
+					break
+				end
+
+				ig.igSameLine()
+
+				ig.igText('3D angle: '..math.deg(math.acos(
+					eq.xyznorm:dot(eq2.xyznorm)
+				))..'°, 2D angle: '..math.deg(
+					((math.atan2(eq2.xyznorm.y, eq2.xyznorm.x) - math.atan2(eq.xyznorm.y, eq.xyznorm.x) + math.pi) % (2 * math.pi)) - math.pi
+				)..'°, angle to closest touching geodesic: '
+					..track.minAngle..'° | '..eq2.place)
+
+				ig.igPopID()
+			end
+			ig.igPopID()
 
 			ig.igEndMenu()
 		end
