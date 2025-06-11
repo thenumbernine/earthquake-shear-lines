@@ -276,8 +276,9 @@ local vars = table(
 			x == 1 or x == 5 or x == 179,
 			x
 		)),
-		drawAxisTorques = true,
-		axisTorquePointSize = 3,
+		drawAxisCloud = true,
+		axisCloudPointSize = .05,
+		axisCloudHeightScale = 1,
 		lat0 = 0,		-- degrees
 		lon0 = -155,	-- degrees
 		roll0 = 0,		-- degrees
@@ -983,6 +984,7 @@ uniform mat4 mvProjMat;
 uniform bool chartIs3D;
 uniform vec3 latlonroll0;
 uniform float pointSize;
+uniform float heightScale;
 
 <?=chartCode?>
 
@@ -994,20 +996,19 @@ void main() {
 	vec3 coords = vec3(
 		mod(latlonofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
 		mod(latlonofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
-		latlonheight.z);							// height in meters
+		latlonheight.z * heightScale);							// height in meters
 
 	vec3 pos = 0.
 <? for _,name in ipairs(chartCNames) do
 ?>		+ weight_<?=name?> * chart_<?=name?>(coords)
 <? end
 ?>	;
-
-	//from meters to normalized coordinates
-	pos /= WGS84_a;
+	pos /= WGS84_a;	//from meters to normalized coordinates
 
 	if (chartIs3D) {
 		pos = vec3(pos.z, pos.x, pos.y);
 	}
+
 
 	mat3 e = mat3(vec3(0.), vec3(0.), vec3(0.))
 <? for _,name in ipairs(chartCNames) do
@@ -1646,14 +1647,14 @@ App.refreshVisibleCircles = |:| do
 			-- and then I should look at the point-cloud of the axis' ...
 			for s=1,1 do -- for s=-1,1,2 do
 				local x,y,z = (s * torque):unpack()
-local xyzlen = math.sqrt(x^2 + y^2 + z^2)
 				--z,x,y = x,y,z	-- hmm ...
 				-- and cartesianToLatLonWGS84 scales it up by WGS84.a ... hmm why
 				local phi, lambda, height = cartesianToLatLonWGS84(x,y,z)
-				latlonheightCPU:insert((math.deg(phi) + 90) % 180 - 90)
-				latlonheightCPU:insert((math.deg(lambda) + 180) % 360 - 180)
-print('point axisLen', c.axisLen, 'xyzlen', xyzlen, 'phi', phi, 'lambda', lambda, 'height', height) -- / charts.WGS84.a
-				latlonheightCPU:insert(height)	--  in meters
+				latlonheightCPU:emplace_back():set(
+					(math.deg(phi) + 90) % 180 - 90,
+					(math.deg(lambda) + 180) % 360 - 180,
+					height	--  in meters
+				)
 			end
 		end
 		latlonheightGPU:endUpdate()
@@ -1972,7 +1973,7 @@ print("...hasn't been dl'd, dl'ing...")
 	end
 
 	-- [=[ TODO show torque axii of circle geodesics
-	if vars.drawAxisTorques then
+	if vars.drawAxisCloud then
 		local sceneObj = self.pairCrossPointsObj
 		if sceneObj.geometry.instanceCount > 0 then
 			for _,name in ipairs(weightFields) do
@@ -1981,7 +1982,8 @@ print("...hasn't been dl'd, dl'ing...")
 			sceneObj.uniforms.latlonroll0 = {vars.lon0, vars.lat0, vars.roll0}
 			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-			sceneObj.uniforms.pointSize = .05
+			sceneObj.uniforms.pointSize = vars.axisCloudPointSize
+			sceneObj.uniforms.heightScale = vars.axisCloudHeightScale
 
 			sceneObj:draw()
 		end
@@ -2091,7 +2093,7 @@ App.event = |:,e| do
 	end
 end
 
-local inputText=|l,t,k|
+local inputFloat=|l,t,k|
 	--ig.luatableInputFloat(l, t, k)
 	--ig.luatableInputFloatAsText(l, t, k)
 	ig.luatableInputFloatAsText(l, t, k, ig.ImGuiInputTextFlags_EnterReturnsTrue)
@@ -2158,15 +2160,15 @@ App.updateGUI = |:| do
 			end
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
-			inputText('earthquakePointSize', vars, 'earthquakePointSize')
+			inputFloat('earthquakePointSize', vars, 'earthquakePointSize')
 
 			ig.luatableCheckbox('draw great arcs', vars, 'drawGreatArcs')
 			ig.luatableSliderFloat('great arc alpha', vars, 'greatArcAlpha', 0, 1)
 			ig.luatableSliderFloat('lineWidth', vars, 'lineWidth', 0, 20)
-			inputText('angleFade', vars, 'angleFade')
+			inputFloat('angleFade', vars, 'angleFade')
 
 			ig.luatableCheckbox('draw flares', vars, 'drawFlares')
-			inputText('flarePointSize', vars, 'flarePointSize')
+			inputFloat('flarePointSize', vars, 'flarePointSize')
 
 			ig.igText'force calcs:'
 			ig.igSameLine()
@@ -2227,7 +2229,7 @@ App.updateGUI = |:| do
 				ig.igSameLine()
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
 			end
-			inputText('julianBaseAngle', require 'time', 'julianBaseAngle')
+			inputFloat('julianBaseAngle', require 'time', 'julianBaseAngle')
 
 			ig.luatableCheckbox('showDrapTex', vars, 'showDrapTex')
 			ig.luatableSliderFloat('drapTexAlpha', vars, 'drapTexAlpha', 0, 1)
@@ -2236,8 +2238,9 @@ App.updateGUI = |:| do
 				self:refreshVisibleCircles()
 			end
 
-			ig.luatableCheckbox('drawAxisTorques', vars, 'drawAxisTorques')
-			ig.luatableSliderFloat('axisTorquePointSize', vars, 'axisTorquePointSize', 0, 10)
+			ig.luatableCheckbox('drawAxisCloud', vars, 'drawAxisCloud')
+			inputFloat('axisCloudPointSize', vars, 'axisCloudPointSize')
+			inputFloat('axisCloudHeightScale', vars, 'axisCloudHeightScale')
 
 			ig.igEndMenu()
 		end
@@ -2286,31 +2289,31 @@ App.updateGUI = |:| do
 
 			ig.igText('# all geodesics through selected quake = '..#eq.allCircles)
 
-			if inputText('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
+			if inputFloat('greatArcAngleMin', calcCircles, 'greatArcAngleMin') then
 				self:invalidateCachedQuakeArcs()
 				self:calcQuakeWindowIndexes()
 			end
-			if inputText('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
+			if inputFloat('greatArcAngleMax', calcCircles, 'greatArcAngleMax') then
 				self:invalidateCachedQuakeArcs()
 				self:calcQuakeWindowIndexes()
 			end
-			if inputText('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
+			if inputFloat('quakeAlignWithPreviousGeodesicAngleThreshold', calcCircles, 'quakeAlignWithPreviousGeodesicAngleThreshold') then
 				self:invalidateCachedQuakeArcs()
 				self:calcQuakeWindowIndexes()
 			end
-			if inputText('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
+			if inputFloat('filterDuplicateTouchingArcsAngleThreshold', calcCircles, 'filterDuplicateTouchingArcsAngleThreshold') then
 				self:invalidateCachedQuakeArcs()
 				self:calcQuakeWindowIndexes()
 			end
-			if inputText('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
+			if inputFloat('filterDuplicatePointsAngleThreshold', calcCircles, 'filterDuplicatePointsAngleThreshold') then
 				self:invalidateCachedQuakeArcs()
 				self:calcQuakeWindowIndexes()
 			end
-			if inputText('prevTimeWindowInDays', calcCircles, 'prevTimeWindowInDays') then
+			if inputFloat('prevTimeWindowInDays', calcCircles, 'prevTimeWindowInDays') then
 				self:invalidateCachedQuakeArcs()
 				self:calcQuakeWindowIndexes()
 			end
-			if inputText('nextTimeWindowInDays', calcCircles, 'nextTimeWindowInDays') then
+			if inputFloat('nextTimeWindowInDays', calcCircles, 'nextTimeWindowInDays') then
 				self:invalidateCachedQuakeArcs()
 				self:calcQuakeWindowIndexes()
 			end
@@ -2368,7 +2371,7 @@ App.updateGUI = |:| do
 				..'° | '..planet.name)
 			end
 
-			if inputText('trackEarthquakeIndex', vars, 'trackEarthquakeIndex') then
+			if inputFloat('trackEarthquakeIndex', vars, 'trackEarthquakeIndex') then
 				self.trackEarthquakeIndexes:insert{
 					index = vars.trackEarthquakeIndex,
 				}
