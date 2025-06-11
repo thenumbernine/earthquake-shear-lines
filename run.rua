@@ -1619,7 +1619,7 @@ App.refreshVisibleCircles = |:| do
 		-- and then I should look at the point-cloud of the axis' ...
 		for s=1,1 do -- for s=-1,1,2 do
 			local x,y,z = (s * torque):unpack()
-local xyzlen = math.sqrt(x^2 + y^2 + z^2)			
+local xyzlen = math.sqrt(x^2 + y^2 + z^2)
 			--z,x,y = x,y,z	-- hmm ...
 			-- and cartesianToLatLonWGS84 scales it up by WGS84.a ... hmm why
 			local phi, lambda, height = cartesianToLatLonWGS84(x,y,z)
@@ -2364,9 +2364,10 @@ App.updateGUI = |:| do
 
 				ig.igPushID_Int(ii)
 
+				local dobreak
 				if ig.igButton'x' then
 					self.trackEarthquakeIndexes:remove(ii)
-					break
+					dobreak = true	-- can't break until popid or imgui will crap itself
 				end
 
 				ig.igSameLine()
@@ -2379,6 +2380,7 @@ App.updateGUI = |:| do
 					..track.minAngle..'° | '..eq2.place)
 
 				ig.igPopID()
+				if dobreak then break end
 			end
 			ig.igPopID()
 
