@@ -590,9 +590,12 @@ void main() {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
-layout(location=0) in vec3 vertex;	// lat, lon, mag
-layout(location=1) in vec2 texcoord;
-layout(location=2) in uvec2 time;	// lo/hi timestamp 32bit int
+layout(location=0) in vec2 vertex;	// texcoord in [-1,1]
+
+// divisor attributes:
+in vec3 latlonrad;	// lat, lon, mag
+in uvec2 time;	// lo/hi timestamp 32bit int
+
 out vec2 texcoordv;
 flat out float deltaJDay;
 
@@ -614,7 +617,7 @@ int cmp(uvec2 a, uvec2 b) {
 }
 
 void main() {
-	texcoordv = texcoord;
+	texcoordv = vertex;
 
 	float alt = 1e+3;
 	int c = cmp(time, hiliteTime);
@@ -627,7 +630,7 @@ void main() {
 		alt *= 2.;
 	}
 
-	vec2 vtxofs = applyLatLonRoll0(vertex.xy);
+	vec2 vtxofs = applyLatLonRoll0(latlonrad.xy);
 
 	vec3 coords = vec3(
 		mod(vtxofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
@@ -651,8 +654,8 @@ void main() {
 ?>		+ weight_<?=name?> * chart_<?=name?>_basis(vec3(coords.xy, 0.))
 <? end
 ?>	;
-	float magn = vertex.z;
-	pos += (texcoord.x * e[0] + texcoord.y * e[1]) * pointSize * magn;
+	float magn = latlonrad.z;
+	pos += (vertex.x * e[0] + vertex.y * e[1]) * pointSize * magn;
 
 	gl_Position = mvProjMat * vec4(pos, 1.);
 }
@@ -691,24 +694,29 @@ void main() {
 		{1, 1}
 	}
 
+	local billboardPointVtxBuf = GLArrayBuffer{
+		dim = 2,
+		usage = gl.GL_STATIC_DRAW,
+		data = {-1, -1, 1, -1, -1, 1, 1, 1},
+	}:unbind()
+
 require 'vec-ffi.vec2i'	-- time
 	self.earthquakeLatLonPointObj = GLSceneObject{
 		program = self.latLonPointShader,
+		vertexes = billboardPointVtxBuf,
 		geometry = {
-			mode = gl.GL_TRIANGLES,
-		},
-		vertexes = {
-			dim = 3,
-			useVec = true,
+			mode = gl.GL_TRIANGLE_STRIP,
 		},
 		attrs = {
-			texcoord = {
+			latlonrad = {
+				divisor = 1,
 				buffer = {
-					dim = 2,
+					dim = 3,
 					useVec = true,
 				},
 			},
 			time = {
+				divisor = 1,
 				buffer = {
 					dim = 2,
 					useVec = true,
@@ -718,54 +726,46 @@ require 'vec-ffi.vec2i'	-- time
 		},
 	}
 	do
-		local vertexGPU = self.earthquakeLatLonPointObj.attrs.vertex.buffer
-		local texcoordGPU = self.earthquakeLatLonPointObj.attrs.texcoord.buffer
+		local latlonradGPU = self.earthquakeLatLonPointObj.attrs.latlonrad.buffer
 		local timeGPU = self.earthquakeLatLonPointObj.attrs.time.buffer
-		local vertexCPU = vertexGPU:beginUpdate()
-		local texcoordCPU = texcoordGPU:beginUpdate()
+		local latlonradCPU = latlonradGPU:beginUpdate()
 		local timeCPU = timeGPU:beginUpdate()
 		for i,eq in ipairs(earthquakes) do
 			-- latitude: S = negative, N = positive
 			-- longitude: W = negative, E = positive
-			for _,v in ipairs(quadVtxs) do
-				vertexCPU:emplace_back()[0]:set(
-					eq.latitude,
-					eq.longitude,
-					eq.mag
-				)
-				texcoordCPU:emplace_back()[0]:set(
-					v[1] * 2 - 1,
-					v[2] * 2 - 1
-				)
-				local t = timeCPU:emplace_back()
-				t.x = tonumber(eq.ostime & 0xffffffffLL)
-				t.y = tonumber((eq.ostime >> 32) & 0xffffffffLL)
-			end
+			latlonradCPU:emplace_back():set(
+				eq.latitude,
+				eq.longitude,
+				eq.mag
+			)
+			timeCPU:emplace_back():set(
+				tonumber(eq.ostime & 0xffffffffLL),
+				tonumber((eq.ostime >> 32) & 0xffffffffLL)
+			)
 		end
-		assert.eq(#vertexCPU, 6 * #earthquakes)
-		vertexGPU:endUpdate()
-		texcoordGPU:endUpdate()
+		assert.eq(#latlonradCPU, #earthquakes)
+		latlonradGPU:endUpdate()
 		timeGPU:endUpdate()
+		self.earthquakeLatLonPointObj.instanceCount = #latlonradCPU
 	end
 
 	-- TODO for this and earthquakeLatLonPointObj, use instances
 	self.flaresLatLonPointObj = GLSceneObject{
 		program = self.latLonPointShader,
+		vertexes = billboardPointVtxBuf,
 		geometry = {
-			mode = gl.GL_TRIANGLES,
-		},
-		vertexes = {
-			dim = 3,
-			useVec = true,
+			mode = gl.GL_TRIANGLE_STRIP,
 		},
 		attrs = {
-			texcoord = {
+			latlonrad = {
+				divisor = 1,
 				buffer = {
-					dim = 2,
+					dim = 3,
 					useVec = true,
 				},
 			},
 			time = {
+				divisor = 1,
 				buffer = {
 					dim = 2,
 					useVec = true,
@@ -775,34 +775,27 @@ require 'vec-ffi.vec2i'	-- time
 		},
 	}
 	do
-		local vertexGPU = self.flaresLatLonPointObj.attrs.vertex.buffer
-		local texcoordGPU = self.flaresLatLonPointObj.attrs.texcoord.buffer
+		local latlonradGPU = self.flaresLatLonPointObj.attrs.latlonrad.buffer
 		local timeGPU = self.earthquakeLatLonPointObj.attrs.time.buffer
-		local vertexCPU = vertexGPU:beginUpdate()
-		local texcoordCPU = texcoordGPU:beginUpdate()
+		local latlonradCPU = latlonradGPU:beginUpdate()
 		local timeCPU = timeGPU:beginUpdate()
 		for i,f in ipairs(flares) do
 			-- latitude: S = negative, N = positive
 			-- longitude: W = negative, E = positive
-			for _,v in ipairs(quadVtxs) do
-				vertexCPU:emplace_back()[0]:set(
-					f.latitude,
-					f.longitude,
-					f.magn + 9	-- log10 watts, so A-class flare = -8
-				)
-				texcoordCPU:emplace_back()[0]:set(
-					v[1] * 2 - 1,
-					v[2] * 2 - 1
-				)
-				local t = timeCPU:emplace_back()
-				t.x = tonumber(f.ostime & 0xffffffffLL)
-				t.y = tonumber((f.ostime >> 32) & 0xffffffffLL)
-			end
+			latlonradCPU:emplace_back():set(
+				f.latitude,
+				f.longitude,
+				f.magn + 9	-- log10 watts, so A-class flare = -8
+			)
+			timeCPU:emplace_back():set(
+				tonumber(f.ostime & 0xffffffffLL),
+				tonumber((f.ostime >> 32) & 0xffffffffLL)
+			)
 		end
-		assert.eq(#vertexCPU, 6 * #flares)
-		vertexGPU:endUpdate()
-		texcoordGPU:endUpdate()
+		assert.eq(#latlonradCPU, #flares)
+		latlonradGPU:endUpdate()
 		timeGPU:endUpdate()
+		self.flaresLatLonPointObj.instanceCount = #latlonradCPU
 	end
 
 	local numCircleDivs = 200
@@ -926,7 +919,6 @@ void main() {
 		},
 		geometry = {
 			mode = gl.GL_LINE_LOOP,
-			count = numCircleDivs,
 		},
 		attrs = {
 			axis = {
@@ -1757,7 +1749,6 @@ App.update = |:| do
 
 	-- while we're here, try to remotely download & cache the DRAP image
 	-- https://services.swpc.noaa.gov/images/animations/d-rap/global/d-rap/SWX_DRAP20_C_SWPC_20250607030500_GLOBAL.png
-	local eq = earthquakes![vars.earthquakeIndex]
 	-- check every frame or will that slow us down?
 	if vars.showDrapTex
 	and timer.getTime() > nextDrapCheckTime
@@ -1911,12 +1902,11 @@ print("...hasn't been dl'd, dl'ing...")
 			tonumber((eq.ostime >> 32) & 0xffffffffLL)
 		}
 
-		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
-		sceneObj.geometry.offset = 6 * (earthquakeWindowStartIndex - 1)
-		sceneObj.geometry.count = 6 * (earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1)
+		sceneObj.geometry.instanceOffset = earthquakeWindowStartIndex - 1
+		sceneObj.geometry.instanceCount = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
 		sceneObj:draw()
-		sceneObj.geometry.offset = nil
-		sceneObj.geometry.count = nil
+		sceneObj.geometry.instanceOffset = nil
+		sceneObj.geometry.instanceCount = nil
 		gl.glDepthFunc(gl.GL_LESS)
 	end
 
@@ -1942,12 +1932,11 @@ print("...hasn't been dl'd, dl'ing...")
 
 		-- TODO also color the flares different or something
 
-		-- 6 * becuse i'm drawing two tris per point into the vertex buffer (TODO billboard and instances maybe?)
-		sceneObj.geometry.offset = 6 * (flareWindowStartIndex - 1)
-		sceneObj.geometry.count = 6 * (flareWindowEndIndex - flareWindowStartIndex + 1)
+		sceneObj.geometry.instanceOffset = flareWindowStartIndex - 1
+		sceneObj.geometry.instanceCount = flareWindowEndIndex - flareWindowStartIndex + 1
 		sceneObj:draw()
-		sceneObj.geometry.offset = nil
-		sceneObj.geometry.count = nil
+		sceneObj.geometry.instanceOfffset = nil
+		sceneObj.geometry.instanceCount = nil
 		gl.glDepthMask(1)
 		gl.glDisable(gl.GL_BLEND)
 		gl.glDepthFunc(gl.GL_LESS)
@@ -2395,7 +2384,8 @@ App.updateGUI = |:| do
 
 			ig.igEndMenu()
 		end
-		if ig.igBeginMenu('| mag='..eq.mag
+		if ig.igBeginMenu('| #'..vars.earthquakeIndex
+			..', mag='..eq.mag
 			..', depth='..eq.depth
 			..', place='..eq.place
 			..', time='..eq.time) then
