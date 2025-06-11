@@ -32,18 +32,21 @@ local getDayCache = |t, force| do
 	if force or not csvpath:exists() then
 		print('downloading '..datestr..'...')
 		local https = require 'ssl.https'
-		csvstr = assert(https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'))
-
-		if force then
-			if csvpath:exists() then
-				changed = assert(csvpath:read()) ~= csvstr
-			end
+		local csvstr, reason = https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time')
+		if not csvstr then
+			print('...failed to download: '..tostring(reason))
 		else
-			-- if no force and it's a new file, then flag it for 'changed'
-			changed = true
-		end
+			if force then
+				if csvpath:exists() then
+					changed = assert(csvpath:read()) ~= csvstr
+				end
+			else
+				-- if no force and it's a new file, then flag it for 'changed'
+				changed = true
+			end
 
-		assert(csvpath:write(csvstr))
+			assert(csvpath:write(csvstr))
+		end
 	else
 		-- cached?  don't set the 'changed' flag
 		print('reading cache '..csvpath)
@@ -113,27 +116,27 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		end
 		eq.xyz = latLonToXYZ(eq)
 		eq.xyznorm = eq.xyz:normalize()
-	
+
 		-- [[ do some calcs
 		if CALC_SUN_OR_MOON_LONGITUDE_ANGLE then
 			local vec2d = require 'vec-ffi.vec2d'
 			local pt2D = vec2d(eq.xyz.x, eq.xyz.y):normalize()
-			
+
 			local sunDir = eq.planets[Planets.indexes.sun].pos - eq.planets[Planets.indexes.earth].pos
 			local sunDir2D = vec2d(sunDir.x, sunDir.y):normalize()
 			local sunAngle = math.deg(math.acos(pt2D:dot(sunDir2D)))
 			assert.index(quakesWithinDegreesOfSun, math.ceil(sunAngle))
 			quakesWithinDegreesOfSun[math.ceil(sunAngle)] += 1
-			
+
 			local moonDir = eq.planets[Planets.indexes.moon].pos - eq.planets[Planets.indexes.earth].pos
 			local moonDir2D = vec2d(moonDir.x, moonDir.y):normalize()
 			local moonAngle = math.deg(math.acos(pt2D:dot(moonDir2D)))
 			assert.index(quakesWithinDegreesOfMoon, math.ceil(moonAngle))
 			quakesWithinDegreesOfMoon[math.ceil(moonAngle)] += 1
-		
+
 			assert.index(quakesWithinDegreesOfSunOrMoon, math.ceil(math.min(sunAngle, moonAngle)))
 			quakesWithinDegreesOfSunOrMoon[math.ceil(math.min(sunAngle, moonAngle))] += 1
-		end -- CALC_SUN_OR_MOON_LONGITUDE_ANGLE 
+		end -- CALC_SUN_OR_MOON_LONGITUDE_ANGLE
 		--]]
 	end
 	earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
@@ -150,12 +153,12 @@ if CALC_SUN_OR_MOON_LONGITUDE_ANGLE then
 # for various angles, count of # of quakes at that longitude angle from quake to sun or moon, from 2025/5/7 to 2025/6/7
 # sun angle, moon angle, min(sun angle, moon angle)
 ]]
-		..range(180):mapi(|i| 
+		..range(180):mapi(|i|
 			table{quakesWithinDegreesOfSun[i], quakesWithinDegreesOfMoon[i], quakesWithinDegreesOfSunOrMoon[i]}:concat'\t'
 		):concat'\n'
 	)
 	os.exit()
-end	-- CALC_SUN_OR_MOON_LONGITUDE_ANGLE 
+end	-- CALC_SUN_OR_MOON_LONGITUDE_ANGLE
 
 return {
 	-- for getting earthquakes

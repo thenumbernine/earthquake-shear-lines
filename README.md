@@ -19,3 +19,9 @@ TO PROGRAM:
 - calibrate julianDay calculator
 - should I just store all planet angles at all earthquake & flare times?
 - S.H. basis for calcs?  If I add GBP data, that's already in SH coefficients ...
+
+- heatmap calculations ...
+... we can use FBO / float buffer and:
+	- equirectangular is most simple
+	- or cubemap to reduce polar distortion (but still has some distortion at cube edges)
+	- or myrihedral projection to make it no distortion

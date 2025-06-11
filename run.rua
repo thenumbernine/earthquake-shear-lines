@@ -94,7 +94,7 @@ vec3 cartesianToLatLonWGS84(vec3 pos) {
 	lambda = mod(lambda, 2. * M_PI);
 	lambda -= M_PI;
 	// longitude = lambda = range of [-pi, pi]
-	return vec3(phi, lambda, height * 1e+3);		// km back to m
+	return vec3(phi, lambda, height);
 }
 //////// END GLSL THAT'S ALSO IN MY EARTH MAGNETIC FIELD MODEL CODE
 
@@ -1625,14 +1625,15 @@ App.refreshVisibleCircles = |:| do
 		-- if points are 180' or if they are next to each other then we want no infuence ...
 		-- ... .maybe I souldn't nrmlize with the cross produt ...
 		-- and then I should look at the point-cloud of the axis' ...
-		for s=-1,1,2 do
+		for s=1,1 do -- for s=-1,1,2 do
 			local x,y,z = (s * torque):unpack()
-			z,x,y = x,y,z	-- hmm ...
+local xyzlen = math.sqrt(x^2 + y^2 + z^2)			
+			--z,x,y = x,y,z	-- hmm ...
 			-- and cartesianToLatLonWGS84 scales it up by WGS84.a ... hmm why
 			local phi, lambda, height = cartesianToLatLonWGS84(x,y,z)
-			pairCrossPoints:insert((((math.deg(phi) + 90) / 180) % 1) * 180 - 90)
-			pairCrossPoints:insert((((math.deg(lambda) + 180) / 360) % 1) * 360 - 180)
---print('point', i, 'axisLen', c.axisLen, 'height', height) -- / charts.WGS84.a
+			pairCrossPoints:insert((math.deg(phi) + 90) % 180 - 90)
+			pairCrossPoints:insert((math.deg(lambda) + 180) % 360 - 180)
+print('point axisLen', c.axisLen, 'xyzlen', xyzlen, 'phi', phi, 'lambda', lambda, 'height', height) -- / charts.WGS84.a
 			pairCrossPoints:insert(height)	--  in meters
 		end
 	end

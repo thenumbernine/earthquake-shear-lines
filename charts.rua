@@ -93,7 +93,7 @@ local cartesianToLatLonWGS84 = |x, y, z| do
 	while lambda > math.pi do
 		lambda = lambda - 2 * math.pi
 	end
-	return phi, lambda, height * 1e+3		-- km back to m
+	return phi, lambda, height	-- height is in m
 end
 
 
