@@ -435,12 +435,12 @@ uniform vec3 latlonroll0;
 <?=chartCode?>
 
 void main() {
-	vec2 vtxofs = applyLatLonRoll0Inv(vertex);
+	vec2 latlonofs = applyLatLonRoll0Inv(vertex);
 
 	//(lat, lon) in [0, 1]
 	texcoordv = vec2(
-		vtxofs.y / 360. + .5,
-		vtxofs.x / 180. + .5
+		latlonofs.y / 360. + .5,
+		latlonofs.x / 180. + .5
 	);
 
 	vec3 coords = vec3(
@@ -630,11 +630,11 @@ void main() {
 		alt *= 2.;
 	}
 
-	vec2 vtxofs = applyLatLonRoll0(latlonrad.xy);
+	vec2 latlonofs = applyLatLonRoll0(latlonrad.xy);
 
 	vec3 coords = vec3(
-		mod(vtxofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
-		mod(vtxofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
+		mod(latlonofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(latlonofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
 		alt);				// height in meters
 
 	vec3 pos = 0.
@@ -667,8 +667,11 @@ void main() {
 			fragmentCode = [[
 in vec2 texcoordv;
 flat in float deltaJDay;
-uniform float alpha;
+
 out vec4 fragColor;
+
+uniform float alpha;
+
 void main() {
 	float lenSq = dot(texcoordv, texcoordv);
 	if (lenSq > 1.) discard;
@@ -685,14 +688,6 @@ void main() {
 }
 ]],
 		}:useNone()
-	local quadVtxs = {
-		{0, 0},
-		{1, 0},
-		{0, 1},
-		{0, 1},
-		{1, 0},
-		{1, 1}
-	}
 
 	local billboardPointVtxBuf = GLArrayBuffer{
 		dim = 2,
@@ -974,25 +969,32 @@ void main() {
 	-- [=[ build here
 	-- show axii of circles
 	self.pairCrossPointsObj = GLSceneObject{
+		-- TODO why not use the earthquake lat lon point obj program?
 		program = {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
-layout(location=0) in vec3 vertex;
+layout(location=0) in vec2 vertex;	// billboard texcoord in [-1,1]^2
+in vec3 latlonheight;				// lat in deg, lon in deg, height in m
+
+out vec2 texcoordv;
+
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
 uniform vec3 latlonroll0;
+uniform float pointSize;
 
 <?=chartCode?>
 
 void main() {
-	vec2 vtxofs = applyLatLonRoll0(vertex.xy);
+	texcoordv = vertex;
+	vec2 latlonofs = applyLatLonRoll0(latlonheight.xy);
 
 	//////// BEGIN CODE MATCHING CHART CODE ABOVE
 	vec3 coords = vec3(
-		mod(vtxofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
-		mod(vtxofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
-		vertex.z);							// height in meters
+		mod(latlonofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(latlonofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
+		latlonheight.z);							// height in meters
 
 	vec3 pos = 0.
 <? for _,name in ipairs(chartCNames) do
@@ -1006,26 +1008,48 @@ void main() {
 	if (chartIs3D) {
 		pos = vec3(pos.z, pos.x, pos.y);
 	}
+
+	mat3 e = mat3(vec3(0.), vec3(0.), vec3(0.))
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>_basis(vec3(coords.xy, 0.))
+<? end
+?>	;
+	pos += (vertex.x * e[0] + vertex.y * e[1]) * pointSize;
+
 	gl_Position = mvProjMat * vec4(pos, 1.);
-	//////// END CODE MATCHING CHART CODE ABOVE
 }
 ]],			{
 				chartCode = chartCode,
 				chartCNames = chartCNames,
 			}),
 			fragmentCode = [[
+in vec2 texcoordv;
+
 out vec4 fragColor;
+
 void main() {
-	fragColor = vec4(1., 1., 1., 1.);
+	float lenSq = dot(texcoordv, texcoordv);
+	if (lenSq > 1.) discard;
+	if (lenSq > .9*.9) {
+		fragColor = vec4(0., 0., 0., 1.);
+	} else {
+		fragColor = vec4(1., 1., 1., 1.);
+	}
 }
 ]],
 },
 		geometry = {
-			mode = gl.GL_POINTS,
+			mode = gl.GL_TRIANGLE_STRIP,
 		},
-		vertexes = {
-			dim = 3,
-			useVec = true,
+		vertexes = billboardPointVtxBuf,
+		attrs = {
+			latlonheight = {
+				divisor = 1,
+				buffer = {
+					dim = 3,
+					useVec = true,
+				},
+			},
 		},
 	}
 	--]=]
@@ -1608,28 +1632,33 @@ App.refreshVisibleCircles = |:| do
 
 	-- TODO FIXME where are these points going?
 	-- [=[ now that we've refreshed the circles, refresh our torque axis points too
-	local pairCrossPoints = self.pairCrossPointsObj.attrs.vertex.buffer.vec
+	do
+		local sceneObj = self.pairCrossPointsObj
+		local latlonheightGPU = sceneObj.attrs.latlonheight.buffer
+		local latlonheightCPU = latlonheightGPU:beginUpdate()
 --print('building points from ',#circles, 'circles')
-	for _,c in ipairs(circles) do
-		local torque = c.axis * c.axisLen
-		-- hmm proper torque would be based on radius from earth ... so consider depth?
-		-- hmmmmm
-		-- if points are 180' or if they are next to each other then we want no infuence ...
-		-- ... .maybe I souldn't nrmlize with the cross produt ...
-		-- and then I should look at the point-cloud of the axis' ...
-		for s=1,1 do -- for s=-1,1,2 do
-			local x,y,z = (s * torque):unpack()
+		for _,c in ipairs(circles) do
+			local torque = c.axis * c.axisLen
+			-- hmm proper torque would be based on radius from earth ... so consider depth?
+			-- hmmmmm
+			-- if points are 180' or if they are next to each other then we want no infuence ...
+			-- ... .maybe I souldn't nrmlize with the cross produt ...
+			-- and then I should look at the point-cloud of the axis' ...
+			for s=1,1 do -- for s=-1,1,2 do
+				local x,y,z = (s * torque):unpack()
 local xyzlen = math.sqrt(x^2 + y^2 + z^2)
-			--z,x,y = x,y,z	-- hmm ...
-			-- and cartesianToLatLonWGS84 scales it up by WGS84.a ... hmm why
-			local phi, lambda, height = cartesianToLatLonWGS84(x,y,z)
-			pairCrossPoints:insert((math.deg(phi) + 90) % 180 - 90)
-			pairCrossPoints:insert((math.deg(lambda) + 180) % 360 - 180)
+				--z,x,y = x,y,z	-- hmm ...
+				-- and cartesianToLatLonWGS84 scales it up by WGS84.a ... hmm why
+				local phi, lambda, height = cartesianToLatLonWGS84(x,y,z)
+				latlonheightCPU:insert((math.deg(phi) + 90) % 180 - 90)
+				latlonheightCPU:insert((math.deg(lambda) + 180) % 360 - 180)
 print('point axisLen', c.axisLen, 'xyzlen', xyzlen, 'phi', phi, 'lambda', lambda, 'height', height) -- / charts.WGS84.a
-			pairCrossPoints:insert(height)	--  in meters
+				latlonheightCPU:insert(height)	--  in meters
+			end
 		end
+		latlonheightGPU:endUpdate()
+		sceneObj.geometry.instanceCount = #latlonheightCPU
 	end
-	self.pairCrossPointsObj:endUpdate()
 	--]=]
 end
 
@@ -1945,17 +1974,16 @@ print("...hasn't been dl'd, dl'ing...")
 	-- [=[ TODO show torque axii of circle geodesics
 	if vars.drawAxisTorques then
 		local sceneObj = self.pairCrossPointsObj
-		if #sceneObj.attrs.vertex.buffer.vec > 0 then
+		if sceneObj.geometry.instanceCount > 0 then
 			for _,name in ipairs(weightFields) do
 				sceneObj.uniforms[name] = vars[name]
 			end
 			sceneObj.uniforms.latlonroll0 = {vars.lon0, vars.lat0, vars.roll0}
 			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+			sceneObj.uniforms.pointSize = .05
 
-			gl.glPointSize(vars.axisTorquePointSize)
 			sceneObj:draw()
-			gl.glPointSize(1)
 		end
 	end
 	--]=]
