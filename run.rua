@@ -9,7 +9,10 @@ local GLProgram = require 'gl.program'
 local GLGeometry = require 'gl.geometry'
 local GLTex2D = require 'gl.tex2d'
 local GLGradientTex2D = require 'gl.gradienttex2d'
+local GLFBO = require 'gl.fbo'
+local glreport = require 'gl.report'
 local ig = require 'imgui'
+local vec2f = require 'vec-ffi.vec2f'
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
 local quatd = require 'vec-ffi.quatd'
@@ -276,7 +279,7 @@ local vars = table(
 			x == 1 or x == 5 or x == 179,
 			x
 		)),
-		drawAxisCloud = true,
+		drawAxisCloud = false,	-- only really useful if you are looking at/ analyzing data in 3D spherical/WGS84 chart view
 		axisCloudPointSize = .02,
 		axisCloudHeightScale = -1,
 		lat0 = 0,		-- degrees
@@ -464,7 +467,7 @@ void main() {
 	posv = pos;
 
 	// lets see the grid over it
-	pos *= .99;
+	pos *= .9999;
 
 	gl_Position = mvProjMat * vec4(pos, 1.);
 }
@@ -584,6 +587,136 @@ void main() {
 		},
 	}
 	--]=====] END CLIP FROM GEOGRAPHIC-CHARTS
+
+	-- program for drawing the lat/lon at each pixel, for the mouse to use
+	self.latLonGlobeObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			vertexCode = template([[
+layout(location=0) in vec2 vertex;
+out vec2 texcoordv;
+out vec3 posv;
+
+uniform mat4 mvProjMat;
+uniform bool chartIs3D;
+uniform vec3 latlonroll0;
+
+<?=chartCode?>
+
+void main() {
+	vec2 latlonofs = applyLatLonRoll0Inv(vertex);
+
+	//(lat, lon) in [0, 1]
+	texcoordv = vec2(
+		latlonofs.y / 360. + .5,
+		latlonofs.x / 180. + .5
+	);
+
+	vec3 coords = vec3(
+		mod(vertex.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(vertex.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
+		0.);						// height in meters
+
+	vec3 pos = 0.
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>(coords)
+<? end
+?>	;
+
+	//from meters to normalized coordinates
+	pos /= WGS84_a;
+
+	if (chartIs3D) {
+		pos = vec3(pos.z, pos.x, pos.y);
+	}
+	posv = pos;
+
+	// lets see the grid over it
+	pos *= .9999;
+
+	gl_Position = mvProjMat * vec4(pos, 1.);
+}
+
+]], 		{
+				chartCode = chartCode,
+				chartCNames = chartCNames,
+			}),
+
+-- [=[
+		geometryCode = [[
+layout (triangles) in;
+layout (triangle_strip, max_vertices = 3) out;
+
+in vec2 texcoordv[];
+out vec2 texcoordg;
+
+in vec3 posv[];
+
+void main() {
+	vec3 dlen = vec3(
+		length(posv[1] - posv[0]),
+		length(posv[2] - posv[1]),
+		length(posv[0] - posv[2]));
+	if (dlen.x > .25 || dlen.y > .25 || dlen.z > .25)
+	{
+		return;
+	}
+
+	gl_Position = gl_in[0].gl_Position;
+	texcoordg = texcoordv[0];
+	EmitVertex();
+
+	gl_Position = gl_in[1].gl_Position;
+	texcoordg = texcoordv[1];
+	if (texcoordv[1].x - texcoordv[0].x > .5) {
+		texcoordg.x -= 1.;
+	}
+	if (texcoordv[1].x - texcoordv[0].x < -.5) {
+		texcoordg.x += 1.;
+	}
+	EmitVertex();
+
+	gl_Position = gl_in[2].gl_Position;
+	texcoordg = texcoordv[2];
+	if (texcoordv[2].x - texcoordv[0].x > .5) {
+		texcoordg.x -= 1.;
+	}
+	if (texcoordv[2].x - texcoordv[0].x < -.5) {
+		texcoordg.x += 1.;
+	}
+	EmitVertex();
+
+	EndPrimitive();
+}
+]],
+--]=]
+			fragmentCode = template[[
+in vec2 texcoordg;
+out vec4 fragColor;
+
+uniform float alpha;	// final alpha
+
+void main() {
+	fragColor = vec4(
+		(texcoordg.x - .5) * 360.,// - .5
+		(texcoordg.y - .5) * 180.,// - .5
+		0.,
+		1.
+	);
+}
+]],
+		},
+		vertexes = self.vertexBuf,
+		geometries = geometries,
+		uniforms = {
+			weight_Equirectangular = 1,
+			weight_Azimuthal_equidistant = 0,
+			weight_Mollweide = 0,
+			weight_WGS84 = 0,
+		},
+	}
+	self.mouseLatLon = vec2f()
 
 
 	-- [=====[ BEGIN EARTHQUAKES
@@ -1537,6 +1670,20 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 	):unbind()
 	self.globeObj.texs[3] = self.gradientTex
 
+	local info = GLTex2D.formatInfoForInternalFormat[gl.GL_RG32F]
+	self.globeLatLonFBOTex = GLTex2D{
+		width = self.width,
+		height = self.height,
+		magFilter = gl.GL_LINEAR,
+		minFilter = gl.GL_NEAREST,
+		internalFormat = info.internalFormat,
+		format = info.format,
+		type = info.types[1],
+	}:unbind()
+	self.fbo = GLFBO()
+		setColorAttachmentTex2D(self.globeLatLonFBOTex, 0)
+		:unbind()
+
 	self.trackEarthquakeIndexes = table()
 
 	self:updateEarthquakeIndex()
@@ -1997,7 +2144,6 @@ print("...hasn't been dl'd, dl'ing...")
 
 	App.super.update(self)
 
-
 	-- while we're here...
 	-- ... re-download the latest day's earthquakes
 	local t = time()
@@ -2008,6 +2154,8 @@ print("...hasn't been dl'd, dl'ing...")
 			print(os.date(), 'TODO upate me plz')
 		end
 	end
+
+	glreport'here'
 end
 
 App.updateEarthquakeIndex = |:| do
@@ -2085,8 +2233,8 @@ end
 
 App.event = |:,e| do
 	App.super.event(self, e)
-	if e[0].type == sdl.SDL_EVENT_KEY_DOWN then
-		if not ig.igGetIO()[0].WantCaptureKeyboard then
+	if not ig.igGetIO()[0].WantCaptureKeyboard then
+		if e[0].type == sdl.SDL_EVENT_KEY_DOWN then
 			if e[0].key.key == sdl.SDLK_LEFT then
 				vars.earthquakeIndex -= 1
 				self:updateEarthquakeIndex()
@@ -2094,6 +2242,34 @@ App.event = |:,e| do
 				vars.earthquakeIndex += 1
 				self:updateEarthquakeIndex()
 			end
+		end
+	end
+	if not ig.igGetIO()[0].WantCaptureMouse then
+		if e[0].type == sdl.SDL_EVENT_MOUSE_MOTION then
+			-- find coordinate closest to mouse / re-render the chart with the chart coordinate underneath and pick it
+			self.fbo:bind()
+			self.fbo.check()
+			gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
+
+			local sceneObj = self.latLonGlobeObj
+			for _,name in ipairs(weightFields) do
+				sceneObj.uniforms[name] = vars[name]
+			end
+			sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
+			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+			sceneObj:draw()
+
+			local mx, my = e[0].motion.x, e[0].motion.y
+			gl.glReadPixels(mx, my, 1, 1, self.globeLatLonFBOTex.format, self.globeLatLonFBOTex.type, self.mouseLatLon.s)
+			self.fbo:unbind()
+
+			-- TODO find closest earthquake here?  or draw it to the buffer and pick it?
+			-- in fact, I could bind the first color buffer and a second ID buffer, do one render for both, and just query the IDs here ... hmm ...
+			-- and then we only need to draw upon mouse move/click callback
+
+		--elseif e[0].type == sdl.SDL_EVENT_MOUSE_DOWN then
+			-- look for closest quake
 		end
 	end
 end
@@ -2122,7 +2298,7 @@ App.updateGUI = |:| do
 			ig.igText('earthquake time = '..eq.time)
 			ig.igText('earthquake julian day = '..eq.julianDay)
 			ig.igText('earthquake magn = '..eq.mag)	-- TODO just a side panel or pop up that shows all the earthquake stats
-			ig.igText('earthquake depth = '..eq.depth)	-- TODO incorporate this into the display somehow ...
+			ig.igText('earthquake depth = '..eq.depth..' km')	-- TODO incorporate this into the display somehow ...
 			ig.igText('earthquake place = '..eq.place)
 			ig.igText('earthquake latitude = '..eq.latitude)
 			ig.igText('earthquake longitude = '..eq.longitude)
@@ -2424,7 +2600,7 @@ App.updateGUI = |:| do
 		end
 		if ig.igBeginMenu('| #'..vars.earthquakeIndex
 			..', mag='..eq.mag
-			..', depth='..eq.depth
+			..', depth='..eq.depth..' km'
 			..', place='..eq.place
 			..', time='..eq.time) then
 			ig.igEndMenu()
@@ -2432,6 +2608,30 @@ App.updateGUI = |:| do
 		ig.igEndMainMenuBar()
 	end
 	ig.igPopStyleColor(1)
+
+--[=[
+	local bestEq
+	local bestDistSq = math.huge
+	for _,eq in ipairs(earthquakes) do
+		-- TODO feedback of where quakes are being rendered, instead of lat lon dist
+		local distSq = (eq.latitude - self.mouseLatLon.x)^2 + (eq.longitude - self.mouseLatLon.y)^2
+		if bestDistSq > distSq then
+			bestDistSq = distSq
+			bestEq = eq
+		end
+	end
+	if bestEq then
+		ig.igBeginTooltip()
+		ig.igText('earthquake time = '..bestEq.time)
+		ig.igText('earthquake julian day = '..bestEq.julianDay)
+		ig.igText('earthquake magn = '..bestEq.mag)	-- TODO just a side panel or pop up that shows all the earthquake stats
+		ig.igText('earthquake depth = '..bestEq.depth..' km')	-- TODO incorporate this into the display somehow ...
+		ig.igText('earthquake place = '..bestEq.place)
+		ig.igText('earthquake latitude = '..bestEq.latitude)
+		ig.igText('earthquake longitude = '..bestEq.longitude)
+		ig.igEndTooltip()
+	end
+--]=]
 end
 
 return App():run()
