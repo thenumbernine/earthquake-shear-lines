@@ -115,44 +115,13 @@ M.calcCirclesInWindow = |earthquakes, earthquakeWindowStartIndex, earthquakeWind
 	return allCircles
 end
 
--- TODO don't calc *all* circles
--- it take 0.1 seconds per quake to calc only its circles
--- so let's just recalc-and-cache per quake
--- TODO TODO now that I'm not calculating *all* circles, it's gonna be duplicate calculating a few circles for each new quake ...
-M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex|do
-
-	local eq = earthquakes[earthquakeIndex]
-
---DEBUG:timer('calc circles', ||do
-	-- calculate all geodesics subject to our criteria
-	eq.allCircles = M.calcCirclesInWindow(earthquakes, earthquakeWindowStartIndex, earthquakeWindowEndIndex)
-
-	for _,eq2 in ipairs(earthquakes) do
-		eq2.circles = {}	-- TODO this set in all earthquakes has to be reset every time the selected earthquake changes
-	end
-	for ci,circle in ipairs(eq.allCircles) do
-		for _,ei in ipairs(circle.indexes) do
-			local eq2 = earthquakes[ei]
-			eq2.circles[ci] = true
-		end
-	end
-
---DEBUG:end)
---print('made '..#eq.allCircles..' great-arcs')
-
-	-- now find all geodesics touching each earthquake
-	-- this is slow, 80 seconds... but per quake is 0.1 secons ....
---DEBUG:timer('find quakes along circles', ||do
+M.findCirclesClosestTo = |earthquakes, earthquakeIndex, allCircles, v|do
 	local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(M.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
 	local cosFilterDuplicateTouchingArcsAngleThreshold = math.cos(math.rad(M.filterDuplicateTouchingArcsAngleThreshold))
 
-	local v = eq.xyznorm
-
 	-- see how close it is to all other circles on file
 	local touchingCircles = table()
-	for ci=1,#eq.allCircles do
-		local c = assert.index(eq.allCircles, ci)
-
+	for ci,c in ipairs(allCircles) do
 		-- make sure that the points that formed this great-arc are far from this point
 		local tooCloseToArcGen = c.indexes[1] == earthquakeIndex or c.indexes[2] == earthquakeIndex
 		if not tooCloseToArcGen then
@@ -176,7 +145,7 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 				local dups
 				if (M.filterDuplicateTouchingArcsAngleThreshold or 0) > 0 then
 					for ci2=1,ci-1 do
-						local c2 = eq.allCircles[ci2]
+						local c2 = allCircles[ci2]
 						if math.abs(c.axis:dot(c2.axis)) > cosFilterDuplicateTouchingArcsAngleThreshold then
 							dups = true
 							break
@@ -194,7 +163,37 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 			end
 		end
 	end
-	eq.touchingCircles = touchingCircles:sort(|ta,tb| ta.angleFromArcInDeg < tb.angleFromArcInDeg)
+	return touchingCircles:sort(|ta,tb| ta.angleFromArcInDeg < tb.angleFromArcInDeg)
+end
+
+-- TODO don't calc *all* circles
+-- it take 0.1 seconds per quake to calc only its circles
+-- so let's just recalc-and-cache per quake
+-- TODO TODO now that I'm not calculating *all* circles, it's gonna be duplicate calculating a few circles for each new quake ...
+M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex|do
+
+	local eq = earthquakes[earthquakeIndex]
+
+--DEBUG:timer('calc circles', ||do
+	-- calculate all geodesics subject to our criteria
+	eq.allCircles = M.calcCirclesInWindow(earthquakes, earthquakeWindowStartIndex, earthquakeWindowEndIndex)
+
+	for _,eq2 in ipairs(earthquakes) do
+		eq2.circles = {}	-- TODO this set in all earthquakes has to be reset every time the selected earthquake changes
+	end
+	for ci,circle in ipairs(eq.allCircles) do
+		for _,ei in ipairs(circle.indexes) do
+			local eq2 = earthquakes[ei]
+			eq2.circles[ci] = true
+		end
+	end
+--DEBUG:end)
+--print('made '..#eq.allCircles..' great-arcs')
+
+	-- now find all geodesics touching each earthquake
+	-- this is slow, 80 seconds... but per quake is 0.1 secons ....
+--DEBUG:timer('find quakes along circles', ||do
+	eq.touchingCircles = M.findCirclesClosestTo(earthquakes, earthquakeIndex, eq.allCircles, eq.xyznorm)
 
 	--[=[ collect unique points to all circles of this point
 	local uniquePointIndexes = {}
