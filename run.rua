@@ -2569,7 +2569,14 @@ App.updateGUI = |:| do
 				end
 
 				ig.igSameLine()
-				ig.igText(t.angleFromArcInDeg..'° from arc')
+				ig.igText(t.angleFromArcInDeg..'° from arc.   3 Points are at angles: '
+					..table{
+						math.deg(t.circle.centerAngle * 2),
+						math.deg(math.acos(eq1.xyznorm:dot(eq.xyznorm))),
+						math.deg(math.acos(eq2.xyznorm:dot(eq.xyznorm))),
+					}:sort():mapi(tostring):concat', '
+				)
+
 
 				ig.igPopID()
 			end

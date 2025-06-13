@@ -54,20 +54,8 @@ M.nextTimeWindowInDays = 0		-- how far into the future
 
 local basisFor = require 'basis'.basisFor
 
--- TODO don't calc *all* circles
--- it take 0.1 seconds per quake to calc only its circles
--- so let's just recalc-and-cache per quake
--- TODO TODO now that I'm not calculating *all* circles, it's gonna be duplicate calculating a few circles for each new quake ...
-M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex|do
-
-	local eq = earthquakes[earthquakeIndex]
-
-	-- calculate all geodesics subject to our criteria
-	eq.allCircles = table()
---DEBUG:timer('calc circles', ||do
-	for _,eq2 in ipairs(earthquakes) do
-		eq2.circles = {}
-	end
+M.calcCirclesInWindow = |earthquakes, earthquakeWindowStartIndex, earthquakeWindowEndIndex|do
+	local allCircles = table()
 
 	for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
 		local eq2 = earthquakes[i]
@@ -118,13 +106,37 @@ M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthqu
 						--]]
 					}
 
-					eq.allCircles:insert(circle)
-					eq2.circles[#eq.allCircles] = true
-					eq3.circles[#eq.allCircles] = true
+					allCircles:insert(circle)
 				end
 			end
 		end
 	end
+
+	return allCircles
+end
+
+-- TODO don't calc *all* circles
+-- it take 0.1 seconds per quake to calc only its circles
+-- so let's just recalc-and-cache per quake
+-- TODO TODO now that I'm not calculating *all* circles, it's gonna be duplicate calculating a few circles for each new quake ...
+M.calcCircles=|earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex|do
+
+	local eq = earthquakes[earthquakeIndex]
+
+--DEBUG:timer('calc circles', ||do
+	-- calculate all geodesics subject to our criteria
+	eq.allCircles = M.calcCirclesInWindow(earthquakes, earthquakeWindowStartIndex, earthquakeWindowEndIndex)
+
+	for _,eq2 in ipairs(earthquakes) do
+		eq2.circles = {}	-- TODO this set in all earthquakes has to be reset every time the selected earthquake changes
+	end
+	for ci,circle in ipairs(eq.allCircles) do
+		for _,ei in ipairs(circle.indexes) do
+			local eq2 = earthquakes[ei]
+			eq2.circles[ci] = true
+		end
+	end
+
 --DEBUG:end)
 --print('made '..#eq.allCircles..' great-arcs')
 
