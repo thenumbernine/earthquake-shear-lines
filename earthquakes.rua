@@ -32,7 +32,8 @@ local getDayCache = |t, force| do
 	if force or not csvpath:exists() then
 		print('downloading '..datestr..'...')
 		local https = require 'ssl.https'
-		local csvstr, reason = https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time')
+		local reason
+		csvstr, reason = https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time')
 		if not csvstr then
 			print('...failed to download: '..tostring(reason))
 		else
@@ -142,7 +143,7 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 	earthquakes:sort(|a,b| a.ostime < b.ostime)	-- oldest first
 	--[[
 	for i,eq in ipairs(earthquakes) do
-		print('earthquake', i, 'ostime', eq.ostime, 'time', eq.time)
+		print('earthquake', i, 'time', eq.time, 'ostime', eq.ostime)
 	end
 	--]]
 end)

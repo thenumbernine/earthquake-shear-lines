@@ -716,8 +716,9 @@ void main() {
 			weight_WGS84 = 0,
 		},
 	}
+	--[[
 	self.mouseLatLon = vec2f()
-
+	--]]
 
 	-- [=====[ BEGIN EARTHQUAKES
 	self.latLonPointShader = GLProgram{
@@ -1670,6 +1671,44 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 	):unbind()
 	self.globeObj.texs[3] = self.gradientTex
 
+	--[=[ redo this every time the screen size changes
+	-- store color here
+	local info = GLTex2D.formatInfoForInternalFormat[gl.GL_RGBA]
+	self.colorFBOTex = GLTex2D{
+		width = self.width,
+		height = self.height,
+		magFilter = gl.GL_LINEAR,
+		minFilter = gl.GL_NEAREST,
+		internalFormat = info.internalFormat,
+		format = info.format,
+		type = info.types[1],
+	}:unbind()
+
+	-- write out IDs when you render to this texture
+	-- use it for click for detecting
+	local info = GLTex2D.formatInfoForInternalFormat[gl.GL_R32UI]
+	self.clickIDFBOTex = GLTex2D{
+		width = self.width,
+		height = self.height,
+		magFilter = gl.GL_NEAREST,
+		minFilter = gl.GL_NEAREST,
+		internalFormat = info.internalFormat,
+		format = info.format,
+		type = info.types[1],
+	}:unbind()
+
+	self.fbo = GLFBO{
+		width = self.width,
+		height = self.height,
+		useDepth = true,
+	}
+	-- can you just have 1 fbo overall, or do you need a different fbo per underlying type etc?
+		:setColorAttachmentTex2D(self.colorFBOTex, 0)
+		--:setColorAttachmentTex2D(self.clickIDFBOTex, 0)
+		:unbind()
+	--]=]
+
+	--[[
 	local info = GLTex2D.formatInfoForInternalFormat[gl.GL_RG32F]
 	self.globeLatLonFBOTex = GLTex2D{
 		width = self.width,
@@ -1680,9 +1719,10 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 		format = info.format,
 		type = info.types[1],
 	}:unbind()
-	self.fbo = GLFBO()
-		setColorAttachmentTex2D(self.globeLatLonFBOTex, 0)
+	fbo:bind()
+		:setColorAttachmentTex2D(self.globeLatLonFBOTex, 0)
 		:unbind()
+	--]]
 
 	self.trackEarthquakeIndexes = table()
 
@@ -1801,6 +1841,7 @@ App.refreshVisibleCircles = |:| do
 				--z,x,y = x,y,z	-- hmm ...
 				-- and cartesianToLatLonWGS84 scales it up by WGS84.a ... hmm why
 				local phi, lambda, height = cartesianToLatLonWGS84(x,y,z)
+--print(x,y,z,phi,lambda)
 				latlonheightCPU:emplace_back():set(
 					(math.deg(phi) + 90) % 180 - 90,
 					(math.deg(lambda) + 180) % 360 - 180,
@@ -1872,6 +1913,8 @@ local nextDrapCheckTime = timer.getTime() - 1
 App.update = |:| do
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
+	local eq = earthquakes[vars.earthquakeIndex]
+
 -- [[
 	self.totalLikelihood = self.totalLikelihood or 1
 	self.oddsTrue = self.oddsTrue or 0
@@ -1879,7 +1922,6 @@ App.update = |:| do
 	-- TODO this is the odds of 2 (or more) matching.  we should calc the odds of the number of matches that we actually got.
 	local probsForEqSetSize = require 'birthday-problem'[calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold]
 	if probsForEqSetSize then
-		local eq = earthquakes[vars.earthquakeIndex]
 		if not eq.probabilityOfFindingAnyGeodesic then
 			local numQuakesInWindow = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
 			eq.probabilityOfFindingAnyGeodesic = probsForEqSetSize[numQuakesInWindow] or 1
@@ -1905,7 +1947,6 @@ App.update = |:| do
 	end
 --]]
 
-
 	if vars.recenterOnQuake then
 --[[ LERP - and all the coordinate problems that go with it
 		vars.lat0 = math.mix(vars.lat0, vars.targetlat0, vars.latlonroll0convergeRate)
@@ -1925,8 +1966,6 @@ App.update = |:| do
 		end
 --]]
 	end
-
-	local eq = earthquakes![vars.earthquakeIndex]
 
 	-- while we're here, try to remotely download & cache the DRAP image
 	-- https://services.swpc.noaa.gov/images/animations/d-rap/global/d-rap/SWX_DRAP20_C_SWPC_20250607030500_GLOBAL.png
@@ -2077,7 +2116,6 @@ print("...hasn't been dl'd, dl'ing...")
 		sceneObj.uniforms.pointSize = vars.earthquakePointSize
 		sceneObj.uniforms.alpha = 1
 
-		local eq = earthquakes[vars.earthquakeIndex]
 		sceneObj.uniforms.hiliteTime = {
 			tonumber(eq.ostime & 0xffffffffLL),
 			tonumber((eq.ostime >> 32) & 0xffffffffLL)
@@ -2105,7 +2143,6 @@ print("...hasn't been dl'd, dl'ing...")
 		sceneObj.uniforms.pointSize = vars.flarePointSize
 		sceneObj.uniforms.alpha = .2
 
-		local eq = earthquakes[vars.earthquakeIndex]
 		sceneObj.uniforms.hiliteTime = {
 			tonumber(eq.ostime & 0xffffffffLL),
 			tonumber((eq.ostime >> 32) & 0xffffffffLL)
@@ -2141,6 +2178,7 @@ print("...hasn't been dl'd, dl'ing...")
 		end
 	end
 	--]=]
+
 
 	App.super.update(self)
 
@@ -2244,6 +2282,7 @@ App.event = |:,e| do
 			end
 		end
 	end
+	--[[
 	if not ig.igGetIO()[0].WantCaptureMouse then
 		if e[0].type == sdl.SDL_EVENT_MOUSE_MOTION then
 			-- find coordinate closest to mouse / re-render the chart with the chart coordinate underneath and pick it
@@ -2272,6 +2311,7 @@ App.event = |:,e| do
 			-- look for closest quake
 		end
 	end
+	--]]
 end
 
 local inputFloat=|l,t,k|
