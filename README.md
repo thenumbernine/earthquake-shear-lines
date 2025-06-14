@@ -4,6 +4,8 @@ TO CALC:
 - make a graph, per quake, of the falloff of "quakeAlignWithPreviousGeodesicAngleThreshold" - number of geodesics that align with this quake vs the threshold angle size.
 	... because I've got it as tight as 0.1 degrees and every single quake still aligns with geodesics ... i.e. for every quake, there's 2 or more other quakes on Earth already forming a straight line with it.
 - make a heatmap of *all geodesics* formed from 0.1 degrees & +/- 3 days
+- bin graph of angles that the 3 quakes used form a 0.1 degree separation geodesic are apart ... 30 90 120 150 showed up very often
+- graph how often torque radial integral isobars lines up with geodesics ...
 
 TO PROGRAM:
 - use bisect method for esarch for time windows in the earthquakes and flares data

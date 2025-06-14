@@ -231,9 +231,10 @@ enum {
 	calcFlags_calcGravHorz = 8,
 	calcFlags_calcGrav = calcFlags_calcGravVert | calcFlags_calcGravHorz,
 	calcFlags_calcCrossPos2D = 16,
-	calcFlags_calcCrossPos3D = 32,	// honestly really why
+	calcFlags_calcCrossPos3D = 32,
 	calcFlags_calcCrossVel = 64,
-	calcFlags_calcRadialIntegral = 128,
+	calcFlags_calcRadialIntegral = 128,	// integrates previous result in spherical coordinates
+	calcFlags_calcSurfaceGradMagn = 256,	// takes previous result, does df/dθ and df/dφ in spherical, calcs magnitude using spherical metric of diag(r^2, r^2 sin(θ)^2)
 };
 enum {
 	]]..displayComponentCNames:mapi(|v,i| v..' = '..i):concat',\n\t'..',\n'..[[
@@ -269,6 +270,7 @@ local vars = table(
 		calcCrossPos3D = false,	-- cross force with position (incl z along axis)
 		calcCrossVel = false,
 		calcRadialIntegral = false,	-- integrate along earth radius parameter from core to surface
+		calcSurfaceGradMagn = false,
 
 		displayComponent = #displayComponentNames,
 
@@ -1436,10 +1438,10 @@ real4 calcAccelAtPoint(
 }
 
 kernel void calcTideAndGrav(
-	global real * out,		// output[i] = force component specified
-	global real4 * const planetPosRelEarth,	// input positions[9] = (pos - earth.pos) x y z and mass = w
-	int calcFlags,
-	int display
+	global real * const out,		// output[i] = force component specified
+	global real4 const * const planetPosRelEarth,	// input positions[9] = (pos - earth.pos) x y z and mass = w
+	int const calcFlags,
+	int const display
 ) {
 	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
 	// index, x = longitude = east/west, y = latitude = north/south
@@ -1464,19 +1466,25 @@ kernel void calcTideAndGrav(
 	//real4 normal = normalize(posOnEarth);
 	real4 normal = e_r;
 
+	//spherical coordinates, so theta goes from north pole to south pole, and phi goes around the earth
+	real const rsurf = length(posOnEarth);
+	real const sinTheta = length(posOnEarth.xy) / rsurf;
+	real const dphi = <?=clnumber((2 * math.pi) / clsize[1])?>;
+	real const dtheta = <?=clnumber(math.pi / clsize[2])?>;
+	real const invdphi = <?=clnumber(clsize[1] / (2 * math.pi))?>;
+	real const invdtheta = <?=clnumber(clsize[2] / math.pi)?>;
+
 	real4 accel;
 	if (calcFlags & calcFlags_calcRadialIntegral) {
 		accel = (real4)(0., 0., 0., 0.);
 		//if calcFlags_calcRadialIntegral then integrate ...
-		real const rsurf = length(posOnEarth);
-		int const raddiv = 99;
-		real const oneOverRadDiv = 1. / (real)raddiv;
+<?
+local raddiv = 100
+?>
+		real const oneOverRadDiv = <?=clnumber(1 / raddiv)?>;
 		real const dr = rsurf * oneOverRadDiv;
-		real const dphi = 2. * M_PI / <?=clnumber(clsize[1])?>;
-		real const dtheta = M_PI / <?=clnumber(clsize[2])?>;
-		real const sinTheta = length(posOnEarth.xy) / rsurf;
 		real const sinTheta_dr_dtheta_dphi = sinTheta * dr * dtheta * dphi;
-		for (int i = 0; i < raddiv; ++i) {
+		for (int i = 0; i < <?=raddiv?>; ++i) {
 			real const f = ((real)i + .5) * oneOverRadDiv;
 			real const r = f * rsurf;
 			real4 accelAtPt = calcAccelAtPoint(posOnEarth * f, normal, planetPosRelEarth, calcFlags);
@@ -1568,11 +1576,76 @@ kernel void calcTideAndGrav(
 	}
 }
 
+//if (calcFlags & calcFlags_calcSurfaceGradMagn) {
+kernel void gradient(
+	global real * const out,
+	global real const * const in
+) {
+	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
+
+	real4 latlon = (real4)(
+		(real)((i.y + .5) / <?=clnumber(clsize[2])?>) * 180. - 90.,
+		(real)((i.x + .5) / <?=clnumber(clsize[1])?>) * 360. - 180.,
+		0.,
+		0.
+	);
+
+	real4 posOnEarth = chart_WGS84(latlon);
+
+	//spherical coordinates, so theta goes from north pole to south pole, and phi goes around the earth
+	real const rsurf = length(posOnEarth);
+	real const sinTheta = length(posOnEarth.xy) / rsurf;
+	real const dphi = <?=clnumber((2 * math.pi) / clsize[1])?>;
+	real const dtheta = <?=clnumber(math.pi / clsize[2])?>;
+	real const invdphi = <?=clnumber(clsize[1] / (2 * math.pi))?>;
+	real const invdtheta = <?=clnumber(clsize[2] / math.pi)?>;
+
+	// spherical phi, not wgs84 phi ... smh
+	int4 ixL = i;
+	ixL.x = (ixL.x + <?=clsize[1]?> - 1) % <?=clsize[1]?>;
+	int const index_xL = indexForInt4ForSize(ixL, <?=clsize[1]?>, <?=clsize[2]?>, 1);
+	
+	int4 ixR = i;
+	ixR.x = (ixR.x + 1) % <?=clsize[1]?>;
+	int const index_xR = indexForInt4ForSize(ixR, <?=clsize[1]?>, <?=clsize[2]?>, 1);
+	
+	int4 iyL = i;
+	iyL.y--;
+	if (iyL.y < 0) {
+		iyL.y = 0;
+		iyL.x = <?=clsize[1]?> - 1 - iyL.x;
+	}
+	int const index_yL = indexForInt4ForSize(iyL, <?=clsize[1]?>, <?=clsize[2]?>, 1);
+	
+	int4 iyR = i;
+	iyR.y++;
+	if (iyR.y >= <?=clsize[2]?>) {
+		iyR.y = <?=clsize[2]-1?>;
+		iyR.x = <?=clsize[1]?> - 1 - iyR.x;
+	}		
+	int const index_yR = indexForInt4ForSize(iyR, <?=clsize[1]?>, <?=clsize[2]?>, 1);
+
+	real const f_xL = in[index_xL];
+	real const f_xR = in[index_xR];
+	real const f_yL = in[index_yL];
+	real const f_yR = in[index_yR];
+	
+	real const df_dtheta = -(f_yR - f_yL) * invdtheta;
+	real const df_dphi = (f_xR - f_xL) * invdphi;
+	real const rSq = rsurf * rsurf;
+	real const g_theta_theta = rSq;
+	real const g_phi_phi = rSq * sinTheta * sinTheta;
+	out[index] = sqrt(
+		df_dphi * df_dphi * g_theta_theta
+		+ df_dtheta * df_dtheta * g_phi_phi
+	);
+}
+
 kernel void rescale(
-	global float * outv,
-	global real * const inv,
-	real minv,
-	real maxv
+	global float * const outv,
+	global real const * const inv,
+	real const minv,
+	real const maxv
 ) {
 	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
 	outv[index] = (float)((inv[index] - minv) / (maxv - minv));
@@ -1589,6 +1662,7 @@ kernel void rescale(
 	self.calcTideAndGravProgram:compile()
 
 	self.forceBuffer = self.env:buffer{name='forceBuffer', type='real'}
+	self.dforceBuffer = self.env:buffer{name='dforceBuffer', type='real'}	-- for when you use gradients
 
 	self.rescaleForceCPUBuf = vector('float', self.clvolume)
 assert.len(self.rescaleForceCPUBuf, self.clvolume)
@@ -1609,6 +1683,10 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 	self.calcTideAndGravKernel = self.calcTideAndGravProgram:kernel'calcTideAndGrav'
 	self.calcTideAndGravKernel.obj:setArg(0, self.forceBuffer)
 	self.calcTideAndGravKernel.obj:setArg(1, self.planetPosRelEarthBuffer)
+
+	self.gradientKernel = self.calcTideAndGravProgram:kernel'gradient'
+	self.gradientKernel.obj:setArg(0, self.dforceBuffer)
+	self.gradientKernel.obj:setArg(1, self.forceBuffer)
 
 	-- TODO instead of this, use GL sharing?
 	self.rescaleKernel = self.calcTideAndGravProgram:kernel'rescale'
@@ -2257,9 +2335,18 @@ App.refreshForceBuffer = |:|do
 		| (vars.calcCrossPos3D and ffi.C.calcFlags_calcCrossPos3D or 0)
 		| (vars.calcCrossVel and ffi.C.calcFlags_calcCrossVel or 0)
 		| (vars.calcRadialIntegral and ffi.C.calcFlags_calcRadialIntegral or 0)
+		| (vars.calcSurfaceGradMagn and ffi.C.calcFlags_calcSurfaceGradMagn or 0)
 	))
 	self.calcTideAndGravKernel.obj:setArg(3, int(vars.displayComponent))
 	self.calcTideAndGravKernel()
+
+	if vars.calcSurfaceGradMagn then
+		self.gradientKernel()
+
+		-- now I could swap forceBuffer and dforceBuffer ... and reassign all the kernels that forceBuffer is assigned to ...
+		-- or just copy
+		self.forceBuffer:copyFrom(self.dforceBuffer)
+	end
 
 	self.forceMin = self.reduceMin(self.forceBuffer.obj)
 	self.forceMax = self.reduceMax(self.forceBuffer.obj)
@@ -2429,6 +2516,10 @@ App.updateGUI = |:| do
 			end
 			ig.igSameLine()
 			if ig.luatableTooltipCheckbox('calcRadialIntegral', vars, 'calcRadialIntegral') then
+				self:refreshForceBuffer()
+			end
+			ig.igSameLine()
+			if ig.luatableTooltipCheckbox('calcSurfaceGradMagn', vars, 'calcSurfaceGradMagn') then
 				self:refreshForceBuffer()
 			end
 
