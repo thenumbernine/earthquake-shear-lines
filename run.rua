@@ -1622,7 +1622,7 @@ kernel void gradient(
 	if (iyR.y >= <?=clsize[2]?>) {
 		iyR.y = <?=clsize[2]-1?>;
 		iyR.x = <?=clsize[1]?> - 1 - iyR.x;
-	}		
+	}
 	int const index_yR = indexForInt4ForSize(iyR, <?=clsize[1]?>, <?=clsize[2]?>, 1);
 
 	real const f_xL = in[index_xL];
@@ -1898,6 +1898,22 @@ App.refreshVisibleCircles = |:| do
 			end
 		end
 
+		-- finally finally, solar orbital plane
+		do
+			-- how to determine?  aveverage cross of planets?  least squares?  just rotate the earth's axis?
+			local orbitAxis = vec3d(0,0,1)
+			orbitAxis = require 'basis'.rotateX(orbitAxis, math.rad((23 + 1/60*(26 + 1/60*(21.4119)))))
+			orbitAxis = require 'time'.rotateFromSolarToEarthFrame(orbitAxis, eq.julianDay)
+			local axis2 = basisFor(orbitAxis)
+			local axis3 = orbitAxis:cross(axis2)
+			axisCPU:emplace_back():set(orbitAxis)
+			axis2CPU:emplace_back():set(axis2:unpack())
+			axis3CPU:emplace_back():set(axis3:unpack())
+			colorCPU:emplace_back():set(1,1,1)
+			influenceCPU:emplace_back()[0] = 1
+			centerPosCPU:emplace_back():set(0,0,0,1)
+		end
+
 		axisGPU:endUpdate()
 		axis2GPU:endUpdate()
 		axis3GPU:endUpdate()
@@ -2165,8 +2181,8 @@ print("...hasn't been dl'd, dl'ing...")
 		end
 		gl.glDisable(gl.GL_BLEND)
 		if vars.drawAnyPlanets then
-			sceneObj.geometry.instanceCount = 1
 			gl.glLineWidth(3)
+			sceneObj.geometry.instanceCount = 1
 			sceneObj.uniforms.angleFade = 1
 			local earthPos = eq.planets[Planets.indexes.earth].pos
 			for planetClassIndex,planetClass in ipairs(drawPlanetClasses) do
@@ -2182,6 +2198,12 @@ print("...hasn't been dl'd, dl'ing...")
 					end
 				end
 			end
+		
+			-- last draw the orbit plane
+			sceneObj.uniforms.declinationFromAxis = .5 * math.pi
+			sceneObj.geometry.instanceOffset = self.circlesObjInstanceCount + #drawPlanetClasses * #drawPlanetAngles
+			sceneObj:draw()
+			
 			sceneObj.geometry.instanceCount = nil
 			sceneObj.geometry.instanceOffset = nil
 		end
