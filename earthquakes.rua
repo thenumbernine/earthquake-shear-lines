@@ -11,11 +11,12 @@ what to track ...
 
 local Julian = require 'solarsystem.julian'
 local Planets = require 'solarsystem.planets'
-local time = require 'time'.time
-local timegm = require 'time'.timegm
-local gmtime = require 'time'.gmtime
 local dayInSec = require 'time'.dayInSec
 local rotateFromSolarToEarthFrame = require 'time'.rotateFromSolarToEarthFrame
+
+local time = timer.time
+local timegm = timer.timegm
+local gmtime = timer.gmtime
 
 --local prevDays = 1	-- debugging
 local prevDays = 31

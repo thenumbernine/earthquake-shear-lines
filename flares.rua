@@ -1,12 +1,13 @@
 local Julian = require 'solarsystem.julian'
 local Planets = require 'solarsystem.planets'
-local time = require 'time'.time
-local timegm = require 'time'.timegm
-local gmtime = require 'time'.gmtime
 local dayInSec = require 'time'.dayInSec
 local rotateFromSolarToEarthFrame = require 'time'.rotateFromSolarToEarthFrame
 local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
 local WGS84 = require 'charts'.charts.WGS84
+
+local time = timer.time
+local timegm = timer.timegm
+local gmtime = timer.gmtime
 
 -- TODO this should match with earthquakes.rua
 -- put it in its own file or something

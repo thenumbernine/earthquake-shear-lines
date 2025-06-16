@@ -38,14 +38,13 @@ local earthquakes = require 'earthquakes'.earthquakes
 local checkDuration = 60*5	-- re-check every 5 mins
 
 local flares = require 'flares'
-
-local time = require 'time'.time
-local timegm = require 'time'.timegm
-local gmtime = require 'time'.gmtime
 local dayInSec = require 'time'.dayInSec
 
 local calcCircles = require 'circles'
 
+local time = timer.time
+local timegm = timer.timegm
+local gmtime = timer.gmtime
 
 --[[ me doing some calcs:
 1) get all circles across all earthquakes
@@ -1402,9 +1401,24 @@ App.refreshVisibleCircles = |:| do
 		-- finally finally, solar orbital plane
 		do
 			-- how to determine?  aveverage cross of planets?  least squares?  just rotate the earth's axis?
+			--[[ using the coordinate system + fixed angle
 			local orbitAxis = vec3d(0,0,1)
 			orbitAxis = require 'basis'.rotateX(orbitAxis, math.rad((23 + 1/60*(26 + 1/60*(21.4119)))))
 			orbitAxis = require 'time'.rotateFromSolarToEarthFrame(orbitAxis, eq.julianDay)
+			--]]
+			-- [[ using a sum of cross products of planets, assuming they are all in the plane ... shoudl I weight them? should I just use one or two important ones?
+			local orbitAxis = vec3d(0,0,0)
+			local prevPlanetDir 
+			for _,planetClass in ipairs(drawPlanetClasses) do
+				local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
+				local planetDir = (planetPos - earthPos):normalize()
+				if prevPlanetDir then
+					orbitAxis += planetDir:cross(prevPlanetDir)
+				end
+				prevPlanetDir = planetDir
+			end
+			orbitAxis = orbitAxis:normalize()
+			--]]
 			local axis2 = basisFor(orbitAxis)
 			local axis3 = orbitAxis:cross(axis2)
 			axisCPU:emplace_back():set(orbitAxis)
@@ -2275,7 +2289,9 @@ App.updateGUI = |:| do
 			..', mag='..eq.mag
 			..', depth='..eq.depth..' km'
 			..', place='..eq.place
-			..', time='..eq.time) then
+			..', time='..eq.time 
+			..', julianDay='..eq.julianDay
+		) then
 			ig.igEndMenu()
 		end
 		ig.igEndMainMenuBar()
