@@ -1,7 +1,12 @@
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
 
-local rotateX = |v,th|do
+local M = {}
+
+-- don't know where else to put this, and this is becoming my misc file
+M.dayInSec = 60 * 60 * 24
+
+M.rotateX = |v,th|do
 	local cs = vec2d.exp(th)
 	return vec3d(
 		v.x,
@@ -9,7 +14,7 @@ local rotateX = |v,th|do
 		v.y * cs.y + v.z * cs.x)
 end
 
-local rotateY = |v,th|do
+M.rotateY = |v,th|do
 	local cs = vec2d.exp(th)
 	return vec3d(
 		v.x * cs.x + v.z * cs.y,
@@ -17,7 +22,7 @@ local rotateY = |v,th|do
 		-v.x * cs.y + v.z * cs.x)
 end
 
-local rotateZ = |v,th|do
+M.rotateZ = |v,th|do
 	local cs = vec2d.exp(th)
 	return vec3d(
 		v.x * cs.x - v.y * cs.y,
@@ -25,7 +30,7 @@ local rotateZ = |v,th|do
 		v.z)
 end
 
-local basisFor = |v| do
+M.basisFor = |v| do
 	local x = v:cross(vec3d(1, 0, 0))
 	local y = v:cross(vec3d(0, 1, 0))
 	local z = v:cross(vec3d(0, 0, 1))
@@ -46,9 +51,32 @@ local basisFor = |v| do
 		)
 end
 
-return {
-	basisFor = basisFor,
-	rotateX = rotateX,
-	rotateY = rotateY,
-	rotateZ = rotateZ,
-}
+-- trying to fine-tune this one, wonder why I have to ...
+-- is my julian date calculator off?
+--[[
+UTC time                    my julian day #  juliandate.org's julian-day-#  = timeanddate.com's (but they don't use hours etc / fractions)
+2025-06-04 13:22:35.790 = 2460831.0573587   = 2460830.72361                 = 25155
+... difference = 0.33350199973211
+2025-05-04 00:00:14.865 = 2460799.500172    = 2460799.16667                 = 25124
+... difference = 0.33374869963154
+so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offset? is mine?
+--]]
+M.julianBaseAngle = 97	-- why do I have this weird offset as the day base angle?
+
+-- Lua os.time calls mktime, which converts Y m d H M S to timestamp... with your timezone baked in.
+-- where to put this ... here? charts? ... planets.rua?
+M.rotateFromSolarToEarthFrame = |v, jday| do
+	v = M.rotateZ(v,
+		math.rad(M.julianBaseAngle)
+		+ ((jday % 1) + .5) * -2 * math.pi * (
+			-- convert from sinodic day (24 hours = 360 degrees x ())
+			-- ... to sidereal day
+			1 / (1 - 1 / 365.25)
+			--1
+			--(1 - 1 / 365.25)
+		)
+	)
+	return v
+end
+
+return M

@@ -3,7 +3,7 @@ local Planets = require 'solarsystem.planets'
 
 local bisect = require 'bisect'.bisect
 local bisectrev = require 'bisect'.bisectrev
-local dayInSec = require 'time'.dayInSec
+local dayInSec = require 'basis'.dayInSec
 
 local M = {}
 

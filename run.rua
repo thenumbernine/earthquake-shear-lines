@@ -38,7 +38,7 @@ local earthquakes = require 'earthquakes'.earthquakes
 local checkDuration = 60*5	-- re-check every 5 mins
 
 local flares = require 'flares'
-local dayInSec = require 'time'.dayInSec
+local dayInSec = require 'basis'.dayInSec
 
 local calcCircles = require 'circles'
 
@@ -1404,7 +1404,7 @@ App.refreshVisibleCircles = |:| do
 			--[[ using the coordinate system + fixed angle
 			local orbitAxis = vec3d(0,0,1)
 			orbitAxis = require 'basis'.rotateX(orbitAxis, math.rad((23 + 1/60*(26 + 1/60*(21.4119)))))
-			orbitAxis = require 'time'.rotateFromSolarToEarthFrame(orbitAxis, eq.julianDay)
+			orbitAxis = require 'basis'.rotateFromSolarToEarthFrame(orbitAxis, eq.julianDay)
 			--]]
 			-- [[ using a sum of cross products of planets, assuming they are all in the plane ... shoudl I weight them? should I just use one or two important ones?
 			local orbitAxis = vec3d(0,0,0)
@@ -2091,7 +2091,7 @@ App.updateGUI = |:| do
 				ig.igSameLine()
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
 			end
-			inputFloat('julianBaseAngle', require 'time', 'julianBaseAngle')
+			inputFloat('julianBaseAngle', require 'basis', 'julianBaseAngle')
 
 			ig.luatableCheckbox('showDrapTex', vars, 'showDrapTex')
 			ig.luatableSliderFloat('drapTexAlpha', vars, 'drapTexAlpha', 0, 1)

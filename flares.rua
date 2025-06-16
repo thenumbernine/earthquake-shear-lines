@@ -1,7 +1,7 @@
 local Julian = require 'solarsystem.julian'
 local Planets = require 'solarsystem.planets'
-local dayInSec = require 'time'.dayInSec
-local rotateFromSolarToEarthFrame = require 'time'.rotateFromSolarToEarthFrame
+local dayInSec = require 'basis'.dayInSec
+local rotateFromSolarToEarthFrame = require 'basis'.rotateFromSolarToEarthFrame
 local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
 local WGS84 = require 'charts'.charts.WGS84
 
