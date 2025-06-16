@@ -17,6 +17,7 @@ local gmtime = require 'time'.gmtime
 local dayInSec = require 'time'.dayInSec
 local rotateFromSolarToEarthFrame = require 'time'.rotateFromSolarToEarthFrame
 
+--local prevDays = 1	-- debugging
 local prevDays = 31
 --local prevDays = 365
 --local CALC_SUN_OR_MOON_LONGITUDE_ANGLE = true
