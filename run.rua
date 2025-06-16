@@ -841,6 +841,7 @@ out flat uint idv;
 
 uniform float declinationFromAxis;	// ... in radians
 uniform float angleFade;	// how much to fade out from the centerPos / centerAngle
+uniform uint idbase;
 
 uniform mat4 mvProjMat;
 uniform bool chartIs3D;
@@ -849,7 +850,7 @@ uniform vec3 latlonroll0;	// used for texturing, TODO FIXME proper 3d transform
 <?=chartCode?>
 
 void main() {
-	idv = uint(gl_InstanceID);
+	idv = uint(gl_InstanceID) + idbase;
 	float theta = vertex * 2. * M_PI;
 
 	float decl = cos(declinationFromAxis);
@@ -945,6 +946,7 @@ void main() {
 }
 ]],
 			uniforms = {
+				idbase = 1,	-- never changes, not needed unless I am going to allow clicking on the planet angle circles
 				idhi = 3,	-- 3 == geodesic lines
 			},
 		},
@@ -1309,6 +1311,9 @@ App.resize=|:, ...| do
 	App.super.resize(self, ...)
 	self:refreshFBO()
 end
+
+-- list of earthquakes[vars.earthquakeIndex].allCircles[] that are to be displayed
+local circles
 
 -- refresh the list of what circles we want to display right now
 -- this is either all circles in the last period (3 days? 1 day? etc)
@@ -1696,12 +1701,12 @@ print("...hasn't been dl'd, dl'ing...")
 					end
 				end
 			end
-		
+
 			-- last draw the orbit plane
 			sceneObj.uniforms.declinationFromAxis = .5 * math.pi
 			sceneObj.geometry.instanceOffset = self.circlesObjInstanceCount + #drawPlanetClasses * #drawPlanetAngles
 			sceneObj:draw()
-			
+
 			sceneObj.geometry.instanceCount = nil
 			sceneObj.geometry.instanceOffset = nil
 		end
@@ -1782,7 +1787,7 @@ print("...hasn't been dl'd, dl'ing...")
 	--]=]
 
 	self.fbo:unbind()
-	
+
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 	self.drawFBOObj:draw()
 
@@ -1912,13 +1917,16 @@ App.event = |:,e| do
 
 			self.fbo:unbind()
 			gl.glReadBuffer(readBuffer)
-		
+
 			self.mouseOverEarthquakeIndex = nil
 			self.mouseOverFlareIndex = nil
+			self.mouseOverGeodesicIndex = nil
 			if clickID.y == 1 then	-- earthquakes
 				self.mouseOverEarthquakeIndex = clickID.x
 			elseif clickID.y == 2 then	-- flares
 				self.mouseOverFlareIndex = clickID.x
+			elseif clickID.y == 3 then	-- great-arcs
+				self.mouseOverGeodesicIndex = clickID.x
 			end
 		elseif e[0].type == sdl.SDL_EVENT_MOUSE_BUTTON_DOWN then
 			if self.mouseOverEarthquakeIndex then
@@ -2196,7 +2204,6 @@ App.updateGUI = |:| do
 					}:sort():mapi(tostring):concat', '
 				)
 
-
 				ig.igPopID()
 			end
 
@@ -2287,14 +2294,28 @@ App.updateGUI = |:| do
 			ig.igText('place = '..overEq.place)
 			ig.igText('latitude = '..overEq.latitude)
 			ig.igText('longitude = '..overEq.longitude)
-			ig.igEndTooltip()	
+			ig.igEndTooltip()
 		end
 	elseif self.mouseOverFlareIndex then
 		local overFlare = flares[self.mouseOverFlareIndex]
 		if overFlare then
 			ig.igBeginTooltip()
 			ig.igText('flare id #'..self.mouseOverFlareIndex)
-			ig.igEndTooltip()	
+			ig.igEndTooltip()
+		end
+	elseif self.mouseOverGeodesicIndex then
+		local circle = circles[self.mouseOverGeodesicIndex]
+		if circle then
+			ig.igBeginTooltip()
+			local i1, i2 = table.unpack(circle.indexes)
+			local eq1 = earthquakes[i1]
+			local eq2 = earthquakes[i2]
+			--ig.igText(i..':')	-- TODO lookup ID, or change 'circles' to be a list of IDs so we can get it that way
+			--ig.igSameLine()
+			-- TODO tooltipButton text is always nothing so
+			ig.igText('#'..i1..' '..eq1.place)
+			ig.igText('-> #'..i2..' '..eq2.place)
+			ig.igEndTooltip()
 		end
 	end
 end
