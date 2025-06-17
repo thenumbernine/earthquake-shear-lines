@@ -1194,7 +1194,8 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 		width = self.clsize[1],
 		height = self.clsize[2],
 		magFilter = gl.GL_LINEAR,
-		minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+		--minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+		minFilter = gl.GL_NEAREST,
 		wrap = texWrap,
 		internalFormat = info.internalFormat,
 		format = info.format,
@@ -1884,20 +1885,7 @@ end
 
 App.refreshForceBuffer = |:|do
 --DEBUG:print'refreshing force buffer'
-	local eq = earthquakes![vars.earthquakeIndex]
-	local earthPos = eq.planets[Planets.indexes.earth].pos
-	for i,p in ipairs(eq.planets) do
-		local v = eq.planets[i].pos - earthPos
-		local pos = self.planetPosRelEarthCPUBuf.v + (i-1)
-		pos.x = v.x
-		pos.y = v.y
-		pos.z = v.z
-		pos.w = vars.calcPlanets[p.name] and p.mass or 0
---DEBUG:print('planet', i, 'name', p.name, 'mass', pos.w)
-	end
-	self.planetPosRelEarthBuffer:fromCPU(self.planetPosRelEarthCPUBuf.v)
-
-	self.calcTideAndGravKernel.obj:setArg(2, int(0
+	local calcFlags = 0
 		| (vars.calcTidesVert and ffi.C.calcFlags_calcTidesVert or 0)
 		| (vars.calcTidesHorz and ffi.C.calcFlags_calcTidesHorz or 0)
 		| (vars.calcGravVert and ffi.C.calcFlags_calcGravVert or 0)
@@ -1907,30 +1895,47 @@ App.refreshForceBuffer = |:|do
 		| (vars.calcCrossVel and ffi.C.calcFlags_calcCrossVel or 0)
 		| (vars.calcRadialIntegral and ffi.C.calcFlags_calcRadialIntegral or 0)
 		| (vars.calcSurfaceGradMagn and ffi.C.calcFlags_calcSurfaceGradMagn or 0)
-	))
-	self.calcTideAndGravKernel.obj:setArg(3, int(vars.displayComponent))
-	self.calcTideAndGravKernel()
+	if calcFlags == 0 then
+		ffi.fill(self.rescaleForceCPUBuf.v, self.rescaleForceCPUBuf:getNumBytes())
+	else
+		local eq = earthquakes![vars.earthquakeIndex]
+		local earthPos = eq.planets[Planets.indexes.earth].pos
+		for i,p in ipairs(eq.planets) do
+			local v = eq.planets[i].pos - earthPos
+			local pos = self.planetPosRelEarthCPUBuf.v + (i-1)
+			pos.x = v.x
+			pos.y = v.y
+			pos.z = v.z
+			pos.w = vars.calcPlanets[p.name] and p.mass or 0
+	--DEBUG:print('planet', i, 'name', p.name, 'mass', pos.w)
+		end
+		self.planetPosRelEarthBuffer:fromCPU(self.planetPosRelEarthCPUBuf.v)
 
-	if vars.calcSurfaceGradMagn then
-		self.gradientKernel()
+		self.calcTideAndGravKernel.obj:setArg(2, int(calcFlags))
+		self.calcTideAndGravKernel.obj:setArg(3, int(vars.displayComponent))
+		self.calcTideAndGravKernel()
 
-		-- now I could swap forceBuffer and dforceBuffer ... and reassign all the kernels that forceBuffer is assigned to ...
-		-- or just copy
-		self.forceBuffer:copyFrom(self.dforceBuffer)
+		if vars.calcSurfaceGradMagn then
+			self.gradientKernel()
+
+			-- now I could swap forceBuffer and dforceBuffer ... and reassign all the kernels that forceBuffer is assigned to ...
+			-- or just copy
+			self.forceBuffer:copyFrom(self.dforceBuffer)
+		end
+
+		self.forceMin = self.reduceMin(self.forceBuffer.obj)
+		self.forceMax = self.reduceMax(self.forceBuffer.obj)
+
+		self.rescaleKernel.obj:setArg(2, double(self.forceMin))
+		self.rescaleKernel.obj:setArg(3, double(self.forceMax))
+		self.rescaleKernel()
+
+		self.rescaleForceBuffer:toCPU(self.rescaleForceCPUBuf.v)
 	end
-
-	self.forceMin = self.reduceMin(self.forceBuffer.obj)
-	self.forceMax = self.reduceMax(self.forceBuffer.obj)
-
-	self.rescaleKernel.obj:setArg(2, double(self.forceMin))
-	self.rescaleKernel.obj:setArg(3, double(self.forceMax))
-	self.rescaleKernel()
-
-	self.rescaleForceBuffer:toCPU(self.rescaleForceCPUBuf.v)
 	self.forceTex
 		:bind()
 		:subimage()
-		:generateMipmap()
+		--:generateMipmap()
 		:unbind()
 end
 
