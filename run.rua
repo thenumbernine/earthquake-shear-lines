@@ -242,11 +242,18 @@ enum {
 ]]
 ffi.cdef(calcFlagsCode)
 
+local pickCircles = {
+	all = 0,						-- show all great-arcs made from any two earthquakes within the time window
+	touchingSelectedQuake = 1,		-- show only great-arcs of other pairs of quakes that are within `quakeMinAngleDistFromQuakesThatFormedTheGeodesic` of the selected quake
+	touchingAnyQuakeInWindow = 2,	-- show only great-arcs of other pairs that are within `quakeMinAngleDistFromQuakesThatFormedTheGeodesic` of any quake within the window
+}
+
 local weightFields = chartCNames:mapi(|name| 'weight_'..name)
 local vars = table(
 	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
 	{
-		showOnlySelectedEarthquakeArcs = true ,	-- true = show only selected earthquake circle, false = show all
+		pickCirclesMethod = pickCircles.touchingSelectedQuake,
+		
 		normalizeWeights = true,
 		drawEarth = true,
 		drawEarthquakes = true,
@@ -292,10 +299,10 @@ local vars = table(
 		axisCloudPointSize = .02,
 		axisCloudHeightScale = -1,
 		lat0 = 0,		-- degrees
-		lon0 = -155,	-- degrees
+		lon0 = 157.5,	-- degrees
 		roll0 = 0,		-- degrees
 		targetlat0 = 0,
-		targetlon0 = -155,
+		targetlon0 = 157.5,
 		targetroll0 = 0,
 		latlonroll0convergeRate = 0.1,	-- what coefficient to converge every frame
 		recenterOnQuake = false,
@@ -370,6 +377,7 @@ App.invalidateCachedQuakeArcs = |:|do
 		eq.allCircles = nil
 		eq.touchingCircles = nil
 		eq.circlesMadeByQuakes = nil
+		eq.circlesTouchingAnyEarthquakeInWindow = nil
 	end
 
 -- [[ trying to calculate odds
@@ -1319,13 +1327,11 @@ local circles
 -- or it is all that are touching the currently selected quake
 App.refreshVisibleCircles = |:| do
 	local eq = earthquakes[vars.earthquakeIndex]
-	if vars.showOnlySelectedEarthquakeArcs then
-		-- show all circles touching our currently selected
-		circles = eq.touchingCircles:mapi(|t| t.circle)
-	else
+	if vars.pickCirclesMethod == pickCircles.all then
 		-- show all circles touching any active earthquakes in the last timeframe
 		-- TODO also include future window ... but also TODO should we show future earthquakes too?
 		-- TODO earthquake window slider relative to the previous quake?
+		-- TODO is this just the same as eq.allCircles?
 		local circleIndexes = table()
 		for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
 			local cis = eq.circlesMadeByQuakes[i]
@@ -1336,6 +1342,29 @@ App.refreshVisibleCircles = |:| do
 			end
 		end
 		circles = circleIndexes:keys():sort():mapi(|ci| eq.allCircles[ci])
+	elseif vars.pickCirclesMethod == pickCircles.touchingSelectedQuake then
+		-- show all circles touching our currently selected
+		circles = eq.touchingCircles:mapi(|t| t.circle)	
+	elseif vars.pickCirclesMethod == pickCircles.touchingAnyQuakeInWindow then
+		-- I'm not caching this, and the circles function / caching is intertwined in weird ways, so gotta rebuild here I guess
+		if not eq.circlesTouchingAnyEarthquakeInWindow then
+			local circleIndexes = table()
+			for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
+				local eq2 = earthquakes[i]
+				for circleIndex,circle in ipairs(eq.allCircles) do
+					if calcCircles.circleFitsCriteria(
+						eq.allCircles, circleIndex,
+						earthquakes, i
+					) then
+						circleIndexes[circleIndex] = true
+					end
+				end
+			end	
+			eq.circlesTouchingAnyEarthquakeInWindow = circleIndexes:keys():sort():mapi(|ci| eq.allCircles[ci])
+		end
+		circles = eq.circlesTouchingAnyEarthquakeInWindow
+	else
+		-- error?
 	end
 
 	-- invalidate track objs' min angle to selected earthquake, cuz they are based on 'circles'
@@ -1807,8 +1836,9 @@ print("...hasn't been dl'd, dl'ing...")
 
 	App.super.update(self)
 
-	-- while we're here...
+	--[[ while we're here...
 	-- ... re-download the latest day's earthquakes
+	-- TODO don't do this until you do it on a different process/thread so it doesn't stall the UI
 	local t = time()
 	if t > checkTime + checkDuration then
 		checkTime = t
@@ -1817,6 +1847,7 @@ print("...hasn't been dl'd, dl'ing...")
 			print(os.date(), 'TODO upate me plz')
 		end
 	end
+	--]]
 
 	glreport'here'
 end
@@ -2096,7 +2127,13 @@ App.updateGUI = |:| do
 			ig.luatableCheckbox('showDrapTex', vars, 'showDrapTex')
 			ig.luatableSliderFloat('drapTexAlpha', vars, 'drapTexAlpha', 0, 1)
 
-			if ig.luatableCheckbox('showOnlySelectedEarthquakeArcs', vars, 'showOnlySelectedEarthquakeArcs') then
+			if ig.luatableRadioButton('pickCirclesMethod_touchingSelectedQuake', vars, 'pickCirclesMethod', pickCircles.touchingSelectedQuake) then
+				self:refreshVisibleCircles()
+			end
+			if ig.luatableRadioButton('pickCirclesMethod_touchingAnyQuakeInWindow', vars, 'pickCirclesMethod', pickCircles.touchingAnyQuakeInWindow) then
+				self:refreshVisibleCircles()
+			end
+			if ig.luatableRadioButton('pickCirclesMethod_all', vars, 'pickCirclesMethod', pickCircles.all) then
 				self:refreshVisibleCircles()
 			end
 
