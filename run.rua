@@ -322,7 +322,7 @@ local vars = table(
 ):setmetatable(nil)
 
 for _,k in ipairs(table.keys(vars)) do
-	if cmdline[k] then vars[k] = cmdline[k] end
+	if cmdline[k] ~= nil then vars[k] = cmdline[k] end
 end
 
 
@@ -1884,7 +1884,7 @@ App.updateEarthquakeIndex = |:| do
 end
 
 App.recenterOnQuake = |:|do
-	local eq = earthquakes![vars.earthquakeIndex]
+	local eq = earthquakes[vars.earthquakeIndex]
 	-- ok this will put our quake at center for Equirectangular ... and maybe spherical and wgs84 ...
 	-- but for Azimuthal I'll need to offset lat0 by 90' ...
 	-- so that means our recenter will need offsets which will need to be linearly weighted by the chart parameters
@@ -1904,9 +1904,10 @@ App.recenterOnQuake = |:|do
 	elseif vars.recenterOn == recenterOnValues.solarSystemPlane then
 		recenterOnDir(eq.orbitAxis)
 	else
+		local earthPos = eq.planets[Planets.indexes.earth].pos
 		for _,p in ipairs(drawPlanetClasses) do
 			if vars.recenterOn == recenterOnValues[p.name] then
-				recenterOnDir(eq.planets[p.name].xyznorm)
+				recenterOnDir(eq.planets[Planets.indexes[p.name]].pos - earthPos)
 				break
 			end
 		end
