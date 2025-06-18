@@ -1,4 +1,5 @@
 return select(2, timer('earthquakes.rua', ||do	-- BEGIN TIMER
+
 --[[
 what to track ...
 - over a time range, sequentially go through all earthquakes
@@ -7,8 +8,7 @@ what to track ...
 	- by comparing dot of its axis with previous circles' axis
 - as we get too old, throw out old points and their respective great-arcs
 --]]
-
-
+local vec3d = require 'vec-ffi.vec3d'
 local Julian = require 'solarsystem.julian'
 local Planets = require 'solarsystem.planets'
 local dayInSec = require 'basis'.dayInSec
@@ -119,6 +119,32 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		end
 		eq.xyz = latLonToXYZ(eq)
 		eq.xyznorm = eq.xyz:normalize()
+
+		-- save orbital plane for later
+		-- how to determine?  aveverage cross of planets?  least squares?  just rotate the earth's axis?
+		--[[ using the coordinate system + fixed angle
+		eq.orbitAxis = vec3d(0,0,1)
+		eq.orbitAxis = require 'basis'.rotateX(eq.orbitAxis, math.rad((23 + 1/60*(26 + 1/60*(21.4119)))))
+		eq.orbitAxis = require 'basis'.rotateFromSolarToEarthFrame(eq.orbitAxis, eq.julianDay)
+		--]]
+		-- [[ using a sum of cross products of planets, assuming they are all in the plane ... shoudl I weight them? should I just use one or two important ones?
+		eq.orbitAxis = vec3d(0,0,0)
+		local prevPlanetDir 
+		local earthPos = eq.planets[Planets.indexes.earth].pos
+		for _,planetClass in ipairs(Planets.planetClasses) do
+			if planetClass.name ~= 'earth'
+			and planetClass.name ~= 'EM_Bary'
+			then
+				local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
+				local planetDir = (planetPos - earthPos):normalize()
+				if prevPlanetDir then
+					eq.orbitAxis += planetDir:cross(prevPlanetDir)
+				end
+				prevPlanetDir = planetDir
+			end
+		end
+		eq.orbitAxis = eq.orbitAxis:normalize()
+		--]]
 
 		-- [[ do some calcs
 		if CALC_SUN_OR_MOON_LONGITUDE_ANGLE then

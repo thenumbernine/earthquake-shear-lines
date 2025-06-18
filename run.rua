@@ -248,6 +248,14 @@ local pickCircles = {
 	touchingAnyQuakeInWindow = 2,	-- show only great-arcs of other pairs that are within `quakeMinAngleDistFromQuakesThatFormedTheGeodesic` of any quake within the window
 }
 
+local recenterOnNames = table{
+	'none',	-- = 0 
+	'selectedQuake',	-- = 1
+	'solarSystemPlane',	-- = 2
+}:append(drawPlanetClasses:mapi(|p| p.name))
+
+local recenterOnValues = recenterOnNames:mapi(|name, i| (i-1, name)):setmetatable(nil)
+
 local weightFields = chartCNames:mapi(|name| 'weight_'..name)
 local vars = table(
 	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
@@ -305,17 +313,25 @@ local vars = table(
 		targetlon0 = 157.5,
 		targetroll0 = 0,
 		latlonroll0convergeRate = 0.1,	-- what coefficient to converge every frame
-		recenterOnQuake = false,
+		recenterOn = recenterOnValues.none,
+		
 		earthquakeIndex = #earthquakes,
 
 		trackEarthquakeIndex = -1,
 	}
 ):setmetatable(nil)
 
+for _,k in ipairs(table.keys(vars)) do
+	if cmdline[k] then vars[k] = cmdline[k] end
+end
+
 
 local App = require 'imgui.appwithorbit'()
 App.title = 'Earthquake Geodesics'
-App.viewDist = 2
+App.viewDist = cmdline.viewDist or 2
+
+App.width = cmdline.width or App.width
+App.height = cmdline.height or App.height
 
 local earthquakeWindowStartIndex
 local earthquakeWindowEndIndex
@@ -397,7 +413,7 @@ local texWrap = {
 	t = gl.GL_CLAMP_TO_BORDER,
 }
 
-App.viewOrthoSize = 1.1
+App.viewOrthoSize = cmdline.viewOrthoSize or 1.1
 App.initGL = |:| do
 	App.super.initGL(self)
 
@@ -1430,28 +1446,9 @@ App.refreshVisibleCircles = |:| do
 
 		-- finally finally, solar orbital plane
 		do
-			-- how to determine?  aveverage cross of planets?  least squares?  just rotate the earth's axis?
-			--[[ using the coordinate system + fixed angle
-			local orbitAxis = vec3d(0,0,1)
-			orbitAxis = require 'basis'.rotateX(orbitAxis, math.rad((23 + 1/60*(26 + 1/60*(21.4119)))))
-			orbitAxis = require 'basis'.rotateFromSolarToEarthFrame(orbitAxis, eq.julianDay)
-			--]]
-			-- [[ using a sum of cross products of planets, assuming they are all in the plane ... shoudl I weight them? should I just use one or two important ones?
-			local orbitAxis = vec3d(0,0,0)
-			local prevPlanetDir 
-			for _,planetClass in ipairs(drawPlanetClasses) do
-				local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
-				local planetDir = (planetPos - earthPos):normalize()
-				if prevPlanetDir then
-					orbitAxis += planetDir:cross(prevPlanetDir)
-				end
-				prevPlanetDir = planetDir
-			end
-			orbitAxis = orbitAxis:normalize()
-			--]]
-			local axis2 = basisFor(orbitAxis)
-			local axis3 = orbitAxis:cross(axis2)
-			axisCPU:emplace_back():set(orbitAxis)
+			local axis2 = basisFor(eq.orbitAxis)
+			local axis3 = eq.orbitAxis:cross(axis2)
+			axisCPU:emplace_back():set(eq.orbitAxis)
 			axis2CPU:emplace_back():set(axis2:unpack())
 			axis3CPU:emplace_back():set(axis3:unpack())
 			colorCPU:emplace_back():set(1,1,1)
@@ -1553,6 +1550,10 @@ local quatToEuler = |q|do
 	return lat, lon, roll
 end
 
+if cmdline.makeMovie then
+	vars.earthquakeIndex = 1
+end
+
 local drapPath = path'goes_drap'
 drapPath:mkdir()
 local nextDrapCheckTime = timer.getTime() - 1
@@ -1595,7 +1596,7 @@ App.update = |:| do
 	end
 --]]
 
-	if vars.recenterOnQuake then
+	if vars.recenterOn ~= recenterOnValues.none then
 --[[ LERP - and all the coordinate problems that go with it
 		vars.lat0 = math.mix(vars.lat0, vars.targetlat0, vars.latlonroll0convergeRate)
 		vars.lon0 = math.mix(vars.lon0, vars.targetlon0, vars.latlonroll0convergeRate)
@@ -1731,7 +1732,6 @@ print("...hasn't been dl'd, dl'ing...")
 			gl.glLineWidth(3)
 			sceneObj.geometry.instanceCount = 1
 			sceneObj.uniforms.angleFade = 1
-			local earthPos = eq.planets[Planets.indexes.earth].pos
 			for planetClassIndex,planetClass in ipairs(drawPlanetClasses) do
 				if vars.drawPlanets[planetClass.name] then
 					for declAngleIndex,declAngle in ipairs(drawPlanetAngles) do
@@ -1835,6 +1835,19 @@ print("...hasn't been dl'd, dl'ing...")
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 	self.drawFBOObj:draw()
 
+	if cmdline.makeMovie then
+		-- screenshot
+		self:screenshot()
+	
+		-- select new quake
+		vars.earthquakeIndex += 1
+		if vars.earthquakeIndex > #earthquakes then
+			self:requestExit()
+			return
+		end
+		self:updateEarthquakeIndex()
+	end
+
 	App.super.update(self)
 
 	--[[ while we're here...
@@ -1865,7 +1878,7 @@ App.updateEarthquakeIndex = |:| do
 	self:calcQuakeWindowIndexes()
 	self:refreshForceBuffer()
 
-	if vars.recenterOnQuake then
+	if vars.recenterOn ~= recenterOnValues.none then
 		self:recenterOnQuake()
 	end
 end
@@ -1879,8 +1892,27 @@ App.recenterOnQuake = |:|do
 	-- TODO make an azimuthal with an extra 90' rotate lat that puts 0' lat lon in the middle, so that the center is in the center,
 	--  then the need for this var will go away and roll will work.
 	local chartLat0 = vars.weight_Azimuthal_equidistant * 90
-	vars.targetlat0 = eq.latitude - chartLat0
-	vars.targetlon0 = eq.longitude
+
+	local recenterOnDir = |v|do
+		vars.targetlon0 = math.deg(math.atan2(v.y, v.x))
+		vars.targetlat0 = math.deg(math.atan2(v.z, math.sqrt(v.x^2 + v.y^2)))
+	end
+
+	if vars.recenterOn == recenterOnValues.selectedQuake then
+		vars.targetlat0 = eq.latitude
+		vars.targetlon0 = eq.longitude
+	elseif vars.recenterOn == recenterOnValues.solarSystemPlane then
+		recenterOnDir(eq.orbitAxis)
+	else
+		for _,p in ipairs(drawPlanetClasses) do
+			if vars.recenterOn == recenterOnValues[p.name] then
+				recenterOnDir(eq.planets[p.name].xyznorm)
+				break
+			end
+		end
+	end
+	
+	vars.targetlat0 -= chartLat0
 end
 
 App.refreshForceBuffer = |:|do
@@ -1939,6 +1971,25 @@ App.refreshForceBuffer = |:|do
 		:unbind()
 end
 
+App.getScreenShotFilename=|:|do
+	-- make a new subdir for each application instance ... ?
+	if not self.screenshotDir then
+		local screenshotsPath = path'screenshots'
+		screenshotsPath:mkdir()
+		self.screenshotDir = screenshotsPath/os.date'%Y.%m.%d-%H.%M.%S'
+		assert(not self.screenshotDir:exists(), "found a duplicate screenshot timestamp subdir")
+		assert(self.screenshotDir:mkdir())
+		self.screenshotIndex = 0
+	end
+	local filepath = self.screenshotDir/('%05d.png'):format(self.screenshotIndex)
+	self.screenshotIndex = self.screenshotIndex + 1
+	return filepath
+end
+
+App.screenshot=|:|do
+	self:screenshotToFile(self:getScreenShotFilename().path)
+end
+
 local vec4ui = require 'vec-ffi.create_vec3'{dim=4, ctype='uint32_t'}
 local clickID = vec4ui()
 App.event = |:,e| do
@@ -1951,6 +2002,8 @@ App.event = |:,e| do
 			elseif e[0].key.key == sdl.SDLK_RIGHT then
 				vars.earthquakeIndex += 1
 				self:updateEarthquakeIndex()
+			elseif e[0].key.key == sdl.SDLK_S then
+				self:screenshot()
 			end
 		end
 	end
@@ -2179,9 +2232,13 @@ App.updateGUI = |:| do
 				end
 			end
 
-			if ig.luatableCheckbox('recenterOnQuake', vars, 'recenterOnQuake') then
-				self:recenterOnQuake()
+			for iPlusOne,name in ipairs(recenterOnNames) do
+				local i = iPlusOne - 1
+				if ig.luatableRadioButton('recenterOn_'..name, vars, 'recenterOn', i) then
+					self:recenterOnQuake()
+				end
 			end
+
 			ig.luatableSliderFloat('lat0', vars, 'lat0', -180, 180)
 			ig.luatableSliderFloat('lon0', vars, 'lon0', -180, 180)
 			ig.luatableSliderFloat('roll0', vars, 'roll0', -180, 180)
