@@ -4,14 +4,31 @@
 
 name = "earthquake-shear-lines"
 files = {
+	["README.md"] = "earthquake-shear-lines/README.md",
+	["basis.rua"] = "earthquake-shear-lines/basis.rua",
+	["birthday-problem.rua"] = "earthquake-shear-lines/birthday-problem.rua",
+	["bisect.rua"] = "earthquake-shear-lines/bisect.rua",
+	["calcs.cl"] = "earthquake-shear-lines/calcs.cl",
+	["charts.rua"] = "earthquake-shear-lines/charts.rua",
+	["circles.rua"] = "earthquake-shear-lines/circles.rua",
+	["distinfo"] = "earthquake-shear-lines/distinfo",
 	["earth-color.png"] = "earthquake-shear-lines/earth-color.png",
+	["earthquakes.rua"] = "earthquake-shear-lines/earthquakes.rua",
+	["eph406_1899-10-1_2200-04-06/f64/de406.f64.raw"] = "earthquake-shear-lines/eph406_1899-10-1_2200-04-06/f64/de406.f64.raw",
+	["eph406_1899-10-1_2200-04-06/header.luaconfig"] = "earthquake-shear-lines/eph406_1899-10-1_2200-04-06/header.luaconfig",
+	["flares.rua"] = "earthquake-shear-lines/flares.rua",
 	["run.rua"] = "earthquake-shear-lines/run.rua",
 }
 deps = {
+	"cl",
 	"csv",
+	"ffi",
 	"geographic-charts",
 	"gl",
+	"image",
 	"imgui",
+	"sdl",
+	"solarsystem",
 	"template",
 	"vec-ffi",
 }
