@@ -79,4 +79,11 @@ M.rotateFromSolarToEarthFrame = |v, jday| do
 	return v
 end
 
+-- this is quickly becoming the misc file
+local Planets = require 'solarsystem.planets'
+M.Planets = Planets
+M.getPlanets = |julianDay| do
+	return Planets.fromEphemeris(julianDay, 406, '../solarsystem/eph/406')
+end
+
 return M

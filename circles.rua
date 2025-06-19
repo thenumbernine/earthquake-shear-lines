@@ -1,5 +1,5 @@
 local vec3d = require 'vec-ffi.vec3d'
-local Planets = require 'solarsystem.planets'
+local Planets = require 'basis'.Planets
 
 local bisect = require 'bisect'.bisect
 local bisectrev = require 'bisect'.bisectrev

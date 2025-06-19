@@ -1,6 +1,7 @@
 local Julian = require 'solarsystem.julian'
-local Planets = require 'solarsystem.planets'
 local dayInSec = require 'basis'.dayInSec
+local Planets = require 'basis'.Planets
+local getPlanets = require 'basis'.getPlanets
 local rotateFromSolarToEarthFrame = require 'basis'.rotateFromSolarToEarthFrame
 local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
 local WGS84 = require 'charts'.charts.WGS84
@@ -67,7 +68,7 @@ assert.eq(ffi.typeof(flare.ostime), ffi.typeof'int64_t')
 
 							flare.integratedFlux = mustbenumber(w[7])
 
-							local planets = Planets.fromEphemeris(flare.julianDay, 406, '../solarsystem/eph/406')
+							local planets = getPlanets(flare.julianDay)
 							for i,p in ipairs(planets) do
 								p.pos = rotateFromSolarToEarthFrame(p.pos, flare.julianDay)
 							end

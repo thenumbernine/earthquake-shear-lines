@@ -22,10 +22,11 @@ local vector = require 'ffi.cpp.vector-lua'
 local CLEnv = require 'cl.obj.env'
 local clnumber = require 'cl.obj.number'
 
-local Planets = require 'solarsystem.planets'
 local Julian = require 'solarsystem.julian'
 
+local Planets = require 'basis'.Planets
 local basisFor = require 'basis'.basisFor
+local dayInSec = require 'basis'.dayInSec
 
 local charts = require 'charts'.charts
 local chartCode = require 'charts'.chartCode
@@ -38,7 +39,6 @@ local earthquakes = require 'earthquakes'.earthquakes
 local checkDuration = 60*5	-- re-check every 5 mins
 
 local flares = require 'flares'
-local dayInSec = require 'basis'.dayInSec
 
 local calcCircles = require 'circles'
 
