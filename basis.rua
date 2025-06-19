@@ -83,7 +83,12 @@ end
 local Planets = require 'solarsystem.planets'
 M.Planets = Planets
 M.getPlanets = |julianDay| do
+	--[[ use the full ephemeris from the solarsystem project (200 MB after the multiple GB download & conversion to binary)
 	return Planets.fromEphemeris(julianDay, 406, '../solarsystem/eph/406')
+	--]]
+	-- [[ use a locally stored, truncated version of it, good for distributable.
+	return Planets.fromEphemeris(julianDay, 406, 'eph406_1899-10-1_2200-04-06')
+	--]]
 end
 
 return M
