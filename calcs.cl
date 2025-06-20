@@ -416,11 +416,20 @@ kernel void gradient(
 }
 
 kernel void rescale(
+<? if useGLSharing then ?>
+	write_only image2d_t outTex,
+<? else ?>
 	global float * const outv,
+<? end ?>
 	global real const * const inv,
 	real const minv,
 	real const maxv
 ) {
 	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
-	outv[index] = (float)((inv[index] - minv) / (maxv - minv));
+	float result = (float)((inv[index] - minv) / (maxv - minv));
+<? if useGLSharing then ?>
+	write_imagef(outTex, i.xy, (float4)(result, 0., 0., 0.));
+<? else ?>
+	outv[index] = result;
+<? end ?>
 }

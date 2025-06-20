@@ -249,7 +249,7 @@ local pickCircles = {
 }
 
 local recenterOnNames = table{
-	'none',	-- = 0 
+	'none',	-- = 0
 	'selectedQuake',	-- = 1
 	'solarSystemPlane',	-- = 2
 }:append(drawPlanetClasses:mapi(|p| p.name))
@@ -261,7 +261,7 @@ local vars = table(
 	weightFields:mapi(|name| (name == 'weight_Equirectangular' and 1 or 0, name)),
 	{
 		pickCirclesMethod = pickCircles.touchingSelectedQuake,
-		
+
 		normalizeWeights = true,
 		drawEarth = true,
 		drawEarthquakes = true,
@@ -314,7 +314,7 @@ local vars = table(
 		targetroll0 = 0,
 		latlonroll0convergeRate = 0.1,	-- what coefficient to converge every frame
 		recenterOn = recenterOnValues.none,
-		
+
 		earthquakeIndex = #earthquakes,
 
 		trackEarthquakeIndex = -1,
@@ -1131,19 +1131,38 @@ void main() {
 
 	self.clsize = {200,100}		-- or maybe "forceTexDim" or something
 	self.clvolume = self.clsize[1] * self.clsize[2]
+
 	self.env = CLEnv{
-		verbose = true,
-		useGLSharing = false,
-		precision = 'double',
+		size = self.clsize,
+		precision = cmdline.clprecision or 'double',
+		useGLSharing = cmdline.CLGLSharing,
 		-- TODO how about a getter-for-cmdline-obj ?
 		--getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
 		--getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
 		--deviceType = CLEnv.getDeviceTypeFromCmdLine(...),
-		size = self.clsize,
 	}
+	print('use GL sharing?', self.env.useGLSharing)
+
+	--local internalFormat = self.env.useGLSharing and gl.GL_RGBA32F or gl.GL_R32F
+	local internalFormat = gl.GL_R32F
+	local info = require 'gl.tex'.formatInfoForInternalFormat[internalFormat]
+	self.forceTex = GLTex2D{
+		width = self.clsize[1],
+		height = self.clsize[2],
+		magFilter = gl.GL_LINEAR,
+		--minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+		minFilter = gl.GL_NEAREST,
+		wrap = texWrap,
+		internalFormat = info.internalFormat,
+		format = info.format,
+		type = info.types[1],
+		-- no data?  do I need the rescaleForceCPUBuf?
+	}:unbind()
+	self.globeObj.texs[2] = self.forceTex
 
 	self.calcTideAndGravProgram = self.env:program{
 		code = template(assert(path'calcs.cl':read()), {
+			useGLSharing = self.env.useGLSharing,
 			calcFlagsCode = calcFlagsCode,
 			clsize = self.clsize,
 			clnumber = clnumber,
@@ -1151,15 +1170,36 @@ void main() {
 			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
 		}),
 	}
-
 	self.calcTideAndGravProgram:compile()
 
 	self.forceBuffer = self.env:buffer{name='forceBuffer', type='real'}
 	self.dforceBuffer = self.env:buffer{name='dforceBuffer', type='real'}	-- for when you use gradients
 
-	self.rescaleForceCPUBuf = vector('float', self.clvolume)
+	self.rescaleKernel = self.calcTideAndGravProgram:kernel'rescale'
+	self.rescaleKernel.obj:setArg(1, self.forceBuffer)
+
+	if self.env.useGLSharing then
+print"TODO FIXME WHY DOES IT SAY THE CL CONTEXT IS A BAD CONTEXT?"
+		local CLImageGL = require 'cl.imagegl'
+local cl = require 'ffi.req' 'OpenCL'
+assert(self.env.ctx.id)
+assert(self.forceTex.id)
+		self.forceTexCLImageGL = CLImageGL{
+			context = self.env.ctx,
+			tex = self.forceTex,
+			write = true,
+target = gl.GL_TEXTURE_2D,
+level = 0,
+flags = cl.CL_MEM_WRITE_ONLY,
+		}
+		self.rescaleKernel.obj:setArg(0, self.forceTexCLImageGL)
+	else
+		self.rescaleForceCPUBuf = vector('float', self.clvolume)
 assert.len(self.rescaleForceCPUBuf, self.clvolume)
-	self.rescaleForceBuffer = self.env:buffer{name='forceBuffer', type='float'}
+		self.rescaleForceBuffer = self.env:buffer{name='forceBuffer', type='float'}
+		self.rescaleKernel.obj:setArg(0, self.rescaleForceBuffer)
+		self.forceTex.data = self.rescaleForceCPUBuf.v	-- for forceTex:subimage() calls
+	end
 
 	self.reduceBuffer = self.env:buffer{name='reduceBuffer', type='real'}
 	self.reduceSwapBuffer = self.env:buffer{name='reduceSwapBuffer', type='real'}
@@ -1181,11 +1221,6 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 	self.gradientKernel.obj:setArg(0, self.dforceBuffer)
 	self.gradientKernel.obj:setArg(1, self.forceBuffer)
 
-	-- TODO instead of this, use GL sharing?
-	self.rescaleKernel = self.calcTideAndGravProgram:kernel'rescale'
-	self.rescaleKernel.obj:setArg(0, self.rescaleForceBuffer)
-	self.rescaleKernel.obj:setArg(1, self.forceBuffer)
-
 	self.reduceMin = self.env:reduce{
 		count = self.clvolume,
 		op = |x,y| 'min('..x..', '..y..')',
@@ -1204,21 +1239,6 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 		result = self.reduceResultPtr,
 	}
 
-	local internalFormat = gl.GL_R32F
-	local info = require 'gl.tex'.formatInfoForInternalFormat[internalFormat]
-	self.forceTex = GLTex2D{
-		width = self.clsize[1],
-		height = self.clsize[2],
-		magFilter = gl.GL_LINEAR,
-		--minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
-		minFilter = gl.GL_NEAREST,
-		wrap = texWrap,
-		internalFormat = info.internalFormat,
-		format = info.format,
-		type = info.types[1],
-		data = self.rescaleForceCPUBuf.v,
-	}:unbind()
-	self.globeObj.texs[2] = self.forceTex
 	self.gradientTex = GLGradientTex2D(
 		256,
 --[[ rainbow
@@ -1361,7 +1381,7 @@ App.refreshVisibleCircles = |:| do
 		circles = circleIndexes:keys():sort():mapi(|ci| eq.allCircles[ci])
 	elseif vars.pickCirclesMethod == pickCircles.touchingSelectedQuake then
 		-- show all circles touching our currently selected
-		circles = eq.touchingCircles:mapi(|t| t.circle)	
+		circles = eq.touchingCircles:mapi(|t| t.circle)
 	elseif vars.pickCirclesMethod == pickCircles.touchingAnyQuakeInWindow then
 		-- I'm not caching this, and the circles function / caching is intertwined in weird ways, so gotta rebuild here I guess
 		if not eq.circlesTouchingAnyEarthquakeInWindow then
@@ -1376,7 +1396,7 @@ App.refreshVisibleCircles = |:| do
 						circleIndexes[circleIndex] = true
 					end
 				end
-			end	
+			end
 			eq.circlesTouchingAnyEarthquakeInWindow = circleIndexes:keys():sort():mapi(|ci| eq.allCircles[ci])
 		end
 		circles = eq.circlesTouchingAnyEarthquakeInWindow
@@ -1838,7 +1858,7 @@ print("...hasn't been dl'd, dl'ing...")
 	if cmdline.makeMovie then
 		-- screenshot
 		self:screenshot()
-	
+
 		-- select new quake
 		vars.earthquakeIndex += 1
 		if vars.earthquakeIndex > #earthquakes then
@@ -1912,7 +1932,7 @@ App.recenterOnQuake = |:|do
 			end
 		end
 	end
-	
+
 	vars.targetlat0 -= chartLat0
 end
 
@@ -1929,7 +1949,15 @@ App.refreshForceBuffer = |:|do
 		| (vars.calcRadialIntegral and ffi.C.calcFlags_calcRadialIntegral or 0)
 		| (vars.calcSurfaceGradMagn and ffi.C.calcFlags_calcSurfaceGradMagn or 0)
 	if calcFlags == 0 then
+
+		-- TODO how about I just FBO the forceTex and glClear() it?
 		ffi.fill(self.rescaleForceCPUBuf.v, self.rescaleForceCPUBuf:getNumBytes())
+		self.forceTex
+			:bind()
+			:subimage()
+			--:generateMipmap()
+			:unbind()
+
 	else
 		local eq = earthquakes![vars.earthquakeIndex]
 		local earthPos = eq.planets[Planets.indexes.earth].pos
@@ -1961,15 +1989,23 @@ App.refreshForceBuffer = |:|do
 
 		self.rescaleKernel.obj:setArg(2, double(self.forceMin))
 		self.rescaleKernel.obj:setArg(3, double(self.forceMax))
-		self.rescaleKernel()
 
-		self.rescaleForceBuffer:toCPU(self.rescaleForceCPUBuf.v)
+		if self.env.useGLSharing then
+			gl.glFinish() -- necessary?
+			self.cmds:enqueueAcquireGLObjects{objs={self.forceTexCLImageGL}}
+			self.rescaleKernel()
+			self.cmds:enqueueReleaseGLObjects{objs={self.forceTexCLImageGL}}
+			self.cmds:finish()
+		else
+			self.rescaleKernel()
+			self.rescaleForceBuffer:toCPU(self.rescaleForceCPUBuf.v)
+			self.forceTex
+				:bind()
+				:subimage()
+				--:generateMipmap()
+				:unbind()
+		end
 	end
-	self.forceTex
-		:bind()
-		:subimage()
-		--:generateMipmap()
-		:unbind()
 end
 
 App.getScreenShotFilename=|:|do
@@ -2389,7 +2425,7 @@ App.updateGUI = |:| do
 			..', mag='..eq.mag
 			..', depth='..eq.depth..' km'
 			..', place='..eq.place
-			..', time='..eq.time 
+			..', time='..eq.time
 			..', julianDay='..eq.julianDay
 		) then
 			ig.igEndMenu()
