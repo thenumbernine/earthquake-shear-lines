@@ -3,6 +3,9 @@
 --------------------------------------------
 
 name = "earthquake-shear-lines"
+startDir = 'earthquake-shear-lines'
+luaArgs = {'../langfix/run.lua run.rua'}	-- why doesn't any more than 1 arg work here?
+
 files = {
 	["README.md"] = "earthquake-shear-lines/README.md",
 	["basis.rua"] = "earthquake-shear-lines/basis.rua",
@@ -31,4 +34,13 @@ deps = {
 	"solarsystem",
 	"template",
 	"vec-ffi",
+	"langfix",	-- needed for rua files
+}
+
+luajitLibs = {
+	[1] = {
+		'png',
+		'SDL2',
+		'ssl',	-- TODO distinfo needs a system for knowing when to bundle things like this and the OS libs and lua_cpath libs together ...
+	},
 }
