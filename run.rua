@@ -1135,7 +1135,9 @@ void main() {
 	self.env = CLEnv{
 		size = self.clsize,
 		precision = cmdline.clprecision or 'double',
-		useGLSharing = cmdline.CLGLSharing,
+		useGLSharing = cmdline.useGLSharing or false,	-- default to false since it doesn't seem to work for linux anymore (cuz opencl went to trash in the last 10 years)
+		sdlWindow = self.window,
+		sdlGLContext = self.sdlCtx,
 		-- TODO how about a getter-for-cmdline-obj ?
 		--getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
 		--getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
@@ -1143,8 +1145,8 @@ void main() {
 	}
 	print('use GL sharing?', self.env.useGLSharing)
 
-	--local internalFormat = self.env.useGLSharing and gl.GL_RGBA32F or gl.GL_R32F
-	local internalFormat = gl.GL_R32F
+	local internalFormat = self.env.useGLSharing and gl.GL_RGBA32F or gl.GL_R32F
+	--local internalFormat = gl.GL_R32F
 	local info = require 'gl.tex'.formatInfoForInternalFormat[internalFormat]
 	self.forceTex = GLTex2D{
 		width = self.clsize[1],
@@ -1156,7 +1158,6 @@ void main() {
 		internalFormat = info.internalFormat,
 		format = info.format,
 		type = info.types[1],
-		-- no data?  do I need the rescaleForceCPUBuf?
 	}:unbind()
 	self.globeObj.texs[2] = self.forceTex
 
@@ -1179,18 +1180,11 @@ void main() {
 	self.rescaleKernel.obj:setArg(1, self.forceBuffer)
 
 	if self.env.useGLSharing then
-print"TODO FIXME WHY DOES IT SAY THE CL CONTEXT IS A BAD CONTEXT?"
 		local CLImageGL = require 'cl.imagegl'
-local cl = require 'ffi.req' 'OpenCL'
-assert(self.env.ctx.id)
-assert(self.forceTex.id)
 		self.forceTexCLImageGL = CLImageGL{
 			context = self.env.ctx,
 			tex = self.forceTex,
 			write = true,
-target = gl.GL_TEXTURE_2D,
-level = 0,
-flags = cl.CL_MEM_WRITE_ONLY,
 		}
 		self.rescaleKernel.obj:setArg(0, self.forceTexCLImageGL)
 	else
@@ -1448,11 +1442,10 @@ App.refreshVisibleCircles = |:| do
 		self.circlesObjInstanceCount = #axisCPU
 
 		-- last, make room for each planet, for each angle, for if we draw it
-		local earthPos = eq.planets[Planets.indexes.earth].pos
 		for _,planetClass in ipairs(drawPlanetClasses) do
 			for _,declAngle in ipairs(drawPlanetAngles) do
 				local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
-				local planetDir = (planetPos - earthPos):normalize()
+				local planetDir = planetPos:normalize()
 				local axis2 = basisFor(planetDir)
 				local axis3 = planetDir:cross(axis2)
 				axisCPU:emplace_back():set(planetDir:unpack())
@@ -1838,7 +1831,7 @@ print("...hasn't been dl'd, dl'ing...")
 			for _,name in ipairs(weightFields) do
 				sceneObj.uniforms[name] = vars[name]
 			end
-			sceneObj.uniforms.latlonroll0 = {vars.lon0, vars.lat0, vars.roll0}
+			sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
 			sceneObj.uniforms.mvMat = self.view.mvMat.ptr
 			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
@@ -1924,10 +1917,9 @@ App.recenterOnQuake = |:|do
 	elseif vars.recenterOn == recenterOnValues.solarSystemPlane then
 		recenterOnDir(eq.orbitAxis)
 	else
-		local earthPos = eq.planets[Planets.indexes.earth].pos
 		for _,p in ipairs(drawPlanetClasses) do
 			if vars.recenterOn == recenterOnValues[p.name] then
-				recenterOnDir(eq.planets[Planets.indexes[p.name]].pos - earthPos)
+				recenterOnDir(eq.planets[Planets.indexes[p.name]].pos)
 				break
 			end
 		end
@@ -1960,9 +1952,8 @@ App.refreshForceBuffer = |:|do
 
 	else
 		local eq = earthquakes![vars.earthquakeIndex]
-		local earthPos = eq.planets[Planets.indexes.earth].pos
 		for i,p in ipairs(eq.planets) do
-			local v = eq.planets[i].pos - earthPos
+			local v = eq.planets[i].pos
 			local pos = self.planetPosRelEarthCPUBuf.v + (i-1)
 			pos.x = v.x
 			pos.y = v.y
@@ -2361,11 +2352,10 @@ App.updateGUI = |:| do
 		end
 		if ig.igBeginMenu'angles:' then	-- angles to planets or other objects
 
-			local earthPos = eq.planets[Planets.indexes.earth].pos
 			for _,cl in ipairs(drawPlanetClasses) do	-- planets without earth (nan angle) and EM_Bary (same angle as moon)
 				local planetIndex = Planets.indexes[cl.name]
 				local planet = eq.planets[planetIndex]
-				local planetDir = (planet.pos - earthPos):normalize()
+				local planetDir = planet.pos:normalize()
 				ig.igText('3D angle: '..math.deg(math.acos(
 					eq.xyznorm:dot(planetDir)
 				))..'°, 2D angle: '..math.deg(

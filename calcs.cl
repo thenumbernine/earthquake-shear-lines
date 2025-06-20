@@ -1,6 +1,10 @@
+// everyone says this is a feature, but no one says how to use features ... do i define them? pass them as a cli arg? what?
+//#define __opencl_c_images
+#define __opencl_c_read_write_images
+
 <?=calcFlagsCode?>
 
-real rad(real d) {
+real rad(real const d) {
 	return d * M_PI / 180.;
 }
 
@@ -13,27 +17,27 @@ constant const real WGS84_inverseFlattening = 298.257223563;
 constant const real WGS84_eccentricitySquared = (2. * WGS84_inverseFlattening - 1.) / (WGS84_inverseFlattening * WGS84_inverseFlattening);
 constant const real gravitationalConstant = 6.6738480e-11;	// m^3 / (kg s^2)
 
-real WGS84_calc_N(real sinTheta) {
-	real denom = sqrt(1. - WGS84_eccentricitySquared * sinTheta * sinTheta);
+real WGS84_calc_N(real const sinTheta) {
+	real const denom = sqrt(1. - WGS84_eccentricitySquared * sinTheta * sinTheta);
 	return WGS84_a / denom;
 }
 
 // how many copies of this do I need?
 // This is the CL version to go with the GLSL version...
 // I think I can gsub one to the other ...
-real4 chart_WGS84(real4 latLonHeight) {
-	real lat = latLonHeight.x;
-	real lon = latLonHeight.y;
-	real height = latLonHeight.z;
+real4 chart_WGS84(real4 const latLonHeight) {
+	real const lat = latLonHeight.x;
+	real const lon = latLonHeight.y;
+	real const height = latLonHeight.z;
 
-	real phi = rad(lon);		// spherical φ
-	real theta = rad(lat);		// spherical inclination angle (not azumuthal θ)
-	real cosTheta = cos(theta);
-	real sinTheta = sin(theta);
+	real const phi = rad(lon);		// spherical φ
+	real const theta = rad(lat);		// spherical inclination angle (not azumuthal θ)
+	real const cosTheta = cos(theta);
+	real const sinTheta = sin(theta);
 
-	real N = WGS84_calc_N(sinTheta);
+	real const N = WGS84_calc_N(sinTheta);
 
-	real NPlusH = N + height;
+	real const NPlusH = N + height;
 	real4 y = (real4)(
 		NPlusH * cosTheta * cos(phi),
 		NPlusH * cosTheta * sin(phi),
@@ -44,74 +48,74 @@ real4 chart_WGS84(real4 latLonHeight) {
 }
 
 void chart_WGS84_basis(
-	real4 latLonHeight,
-	real4 *e_phi,
-	real4 *e_theta,
-	real4 *e_negR
+	real4 const latLonHeight,
+	real4 * const e_phi,
+	real4 * const e_theta,
+	real4 * const e_negR
 ) {
-	real phi = rad(latLonHeight.x);
-	real lambda = rad(latLonHeight.y);
-	real height = latLonHeight.z;
+	real const phi = rad(latLonHeight.x);
+	real const lambda = rad(latLonHeight.y);
+	real const height = latLonHeight.z;
 
-	real cosLambda = cos(lambda);
-	real sinLambda = sin(lambda);
+	real const cosLambda = cos(lambda);
+	real const sinLambda = sin(lambda);
 
-	real cosPhi = cos(phi);
-	real sinPhi = sin(phi);
-	real dphi_cosPhi = -sinPhi;
-	real dphi_sinPhi = cosPhi;
+	real const cosPhi = cos(phi);
+	real const sinPhi = sin(phi);
+	real const dphi_cosPhi = -sinPhi;
+	real const dphi_sinPhi = cosPhi;
 
-	real rCart = WGS84_a / sqrt(1. - WGS84_esq * sinPhi * sinPhi);
-	real tmp = sqrt(1. - WGS84_esq * sinPhi * sinPhi);
-	real dphi_rCart = WGS84_a / (tmp * tmp * tmp) * WGS84_esq * sinPhi * dphi_sinPhi;
+	real const rCart = WGS84_a / sqrt(1. - WGS84_esq * sinPhi * sinPhi);
+	real const tmp = sqrt(1. - WGS84_esq * sinPhi * sinPhi);
+	real const dphi_rCart = WGS84_a / (tmp * tmp * tmp) * WGS84_esq * sinPhi * dphi_sinPhi;
 
-	real rCart_over_a = 1. / sqrt(1. - WGS84_esq * sinPhi * sinPhi);
+	real const rCart_over_a = 1. / sqrt(1. - WGS84_esq * sinPhi * sinPhi);
 
-	real xp = (rCart + height) * cosPhi;
-	real dphi_xp = dphi_rCart * cosPhi + (rCart + height) * dphi_cosPhi;
-	real dheight_xp = cosPhi;
+	real const xp = (rCart + height) * cosPhi;
+	real const dphi_xp = dphi_rCart * cosPhi + (rCart + height) * dphi_cosPhi;
+	real const dheight_xp = cosPhi;
 
-	real xp_over_a = (rCart_over_a + height / WGS84_a) * cosPhi;
+	real const xp_over_a = (rCart_over_a + height / WGS84_a) * cosPhi;
 
-	real zp = (rCart * (1. - WGS84_esq) + height) * sinPhi;
-	real dphi_zp = (dphi_rCart * (1. - WGS84_esq)) * sinPhi + (rCart * (1. - WGS84_esq) + height) * dphi_sinPhi;
-	real dheight_zp = sinPhi;
+	real const zp = (rCart * (1. - WGS84_esq) + height) * sinPhi;
+	real const dphi_zp = (dphi_rCart * (1. - WGS84_esq)) * sinPhi + (rCart * (1. - WGS84_esq) + height) * dphi_sinPhi;
+	real const dheight_zp = sinPhi;
 
-	real zp_over_a = (rCart_over_a * (1. - WGS84_esq) + height / WGS84_a) * sinPhi;
+	real const zp_over_a = (rCart_over_a * (1. - WGS84_esq) + height / WGS84_a) * sinPhi;
 
-	real r2D = sqrt(xp * xp + zp * zp);
-	real dphi_r2D = (xp * dphi_xp + zp * dphi_zp) / r2D;
-	real dheight_r2D = (xp * dheight_xp + zp * dheight_zp) / r2D;
+	real const r2D = sqrt(xp * xp + zp * zp);
+	real const dphi_r2D = (xp * dphi_xp + zp * dphi_zp) / r2D;
+	real const dheight_r2D = (xp * dheight_xp + zp * dheight_zp) / r2D;
 
-	real r2D_over_a = sqrt(xp_over_a * xp_over_a + zp_over_a * zp_over_a);
-	real dphi_r2D_over_a = (xp_over_a * dphi_xp + zp_over_a * dphi_zp) / r2D;
+	real const r2D_over_a = sqrt(xp_over_a * xp_over_a + zp_over_a * zp_over_a);
+	real const dphi_r2D_over_a = (xp_over_a * dphi_xp + zp_over_a * dphi_zp) / r2D;
 
-	real sinPhiSph = zp / r2D;
-	real dphi_sinPhiSph = (dphi_zp * r2D - zp * dphi_r2D) / (r2D * r2D);
-	real dheight_sinPhiSph = (dheight_zp * r2D - zp * dheight_r2D) / (r2D * r2D);
+	real const sinPhiSph = zp / r2D;
+	real const dphi_sinPhiSph = (dphi_zp * r2D - zp * dphi_r2D) / (r2D * r2D);
+	real const dheight_sinPhiSph = (dheight_zp * r2D - zp * dheight_r2D) / (r2D * r2D);
 
-	real cosPhiSph = sqrt(1. - sinPhiSph * sinPhiSph);
+	real const cosPhiSph = sqrt(1. - sinPhiSph * sinPhiSph);
 	//d/du sqrt(1 - x^2) = -x/sqrt(1 - x^2) dx/du;
-	real dphi_cosPhiSph = -sinPhi / cosPhiSph * dphi_sinPhiSph;
-	real dheight_cosPhiSph = -sinPhi / cosPhiSph * dheight_sinPhiSph;
+	real const dphi_cosPhiSph = -sinPhi / cosPhiSph * dphi_sinPhiSph;
+	real const dheight_cosPhiSph = -sinPhi / cosPhiSph * dheight_sinPhiSph;
 
 	//real x = r2D * cosPhiSph / WGS84_a * cosLambda;
 	//real y = r2D * cosPhiSph / WGS84_a * sinLambda;
 	//real z = r2D * sinPhiSph / WGS84_a;
 
-	real4 dphi = (real4)(
+	real4 const dphi = (real4)(
 		(dphi_r2D_over_a * cosPhiSph + r2D_over_a * dphi_cosPhiSph) * cosLambda,
 		(dphi_r2D_over_a * cosPhiSph + r2D_over_a * dphi_cosPhiSph) * sinLambda,
 		(dphi_r2D_over_a * sinPhiSph + r2D_over_a * dphi_sinPhiSph),
 		0.);
 
-	real4 dlambda = (real4)(
+	real4 const dlambda = (real4)(
 		-sinLambda,
 		cosLambda,
 		0.,
 		0.);
 
-	real4 dheight = (real4)(
+	real4 const dheight = (real4)(
 		(dheight_r2D * cosPhiSph + r2D * dheight_cosPhiSph) * cosLambda,
 		(dheight_r2D * cosPhiSph + r2D * dheight_cosPhiSph) * sinLambda,
 		(dheight_r2D * sinPhiSph + r2D * dheight_sinPhiSph),
@@ -126,8 +130,8 @@ void chart_WGS84_basis(
 
 //returns magnitude g+m-2d
 real4 calcGravityAccel(
-	real4 posOnEarth, 			//relative to earth, in meters
-	real4 planetPosRelEarth 	//relative to earth, in meters, w = mass in kg
+	real4 const posOnEarth, 			//relative to earth, in meters
+	real4 const planetPosRelEarth 	//relative to earth, in meters, w = mass in kg
 ) {
 	real4 x = posOnEarth - planetPosRelEarth;
 	x.w = 0.;
@@ -138,9 +142,9 @@ real4 calcGravityAccel(
 
 //returns magnitude g+m-2d
 real4 calcTidalAccel(
-	real4 posOnEarth,
-	real4 normal,
-	real4 planetPosRelEarth
+	real4 const posOnEarth,
+	real4 const normal,
+	real4 const planetPosRelEarth
 ) {
 	real4 x = posOnEarth - planetPosRelEarth;
 	x.w = 0.;
@@ -153,10 +157,10 @@ real4 calcTidalAccel(
 }
 
 real4 calcAccelAtPoint(
-	real4 posOnEarth,
-	real4 normal,
-	global real4 * const planetPosRelEarth,
-	int calcFlags
+	real4 const posOnEarth,
+	real4 const normal,
+	global real4 const * const planetPosRelEarth,
+	int const calcFlags
 ) {
 	real4 accel = (real4)(0., 0., 0., 0.);
 
@@ -228,17 +232,17 @@ kernel void calcTideAndGrav(
 		0.
 	);
 
-	real4 posOnEarth = chart_WGS84(latlon);
+	real4 const posOnEarth = chart_WGS84(latlon);
 
 	real4 e_phi, e_theta, e_negR;
 	chart_WGS84_basis(latlon, &e_phi, &e_theta, &e_negR);
-	real4 e_r = -normalize(e_negR);
+	real4 const e_r = -normalize(e_negR);
 	e_theta = normalize(e_theta);
 	e_phi = normalize(e_phi);
 
 	// should I be using e_r or normalize(posOnEarth) ? or are they the same?
 	//real4 normal = normalize(posOnEarth);
-	real4 normal = e_r;
+	real4 const normal = e_r;
 
 	//spherical coordinates, so theta goes from north pole to south pole, and phi goes around the earth
 	real const rsurf = length(posOnEarth);
@@ -271,7 +275,7 @@ local raddiv = 100
 
 	// I'm breaking with chart input component convention and I'm putting r first here
 	// so this is textbook math spherical basis convention of (r,theta,phi), not my geographic-chart convention of lat/lon/-height
-	real4 accel_r_theta_phi = (real4)(
+	real4 const accel_r_theta_phi = (real4)(
 		dot(accel, e_r),
 		dot(accel, e_theta),
 		dot(accel, e_phi),
@@ -357,14 +361,14 @@ kernel void gradient(
 ) {
 	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
 
-	real4 latlon = (real4)(
+	real4 const latlon = (real4)(
 		(real)((i.y + .5) / <?=clnumber(clsize[2])?>) * 180. - 90.,
 		(real)((i.x + .5) / <?=clnumber(clsize[1])?>) * 360. - 180.,
 		0.,
 		0.
 	);
 
-	real4 posOnEarth = chart_WGS84(latlon);
+	real4 const posOnEarth = chart_WGS84(latlon);
 
 	//spherical coordinates, so theta goes from north pole to south pole, and phi goes around the earth
 	real const rsurf = length(posOnEarth);
@@ -417,7 +421,9 @@ kernel void gradient(
 
 kernel void rescale(
 <? if useGLSharing then ?>
-	write_only image2d_t outTex,
+	write_only image2d_t outTex,	//complains invalid GL object (why?)
+	//image2d_t outTex,	// why does this default to read_only?
+	//read_write image2d_t outTex,
 <? else ?>
 	global float * const outv,
 <? end ?>

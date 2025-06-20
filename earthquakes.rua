@@ -115,8 +115,9 @@ timer('calc xyz', ||do
 assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		eq.julianDay = Julian.fromCalendar(eq.date)
 		eq.planets = getPlanets(eq.julianDay)
+		local earthPos = eq.planets[Planets.indexes.earth].pos
 		for i,p in ipairs(eq.planets) do
-			p.pos = rotateFromSolarToEarthFrame(p.pos, eq.julianDay)
+			p.pos = rotateFromSolarToEarthFrame(p.pos - earthPos, eq.julianDay)
 		end
 		eq.xyz = latLonToXYZ(eq)
 		eq.xyznorm = eq.xyz:normalize()
@@ -131,13 +132,12 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		-- [[ using a sum of cross products of planets, assuming they are all in the plane ... shoudl I weight them? should I just use one or two important ones?
 		eq.orbitAxis = vec3d(0,0,0)
 		local prevPlanetDir 
-		local earthPos = eq.planets[Planets.indexes.earth].pos
 		for _,planetClass in ipairs(Planets.planetClasses) do
 			if planetClass.name ~= 'earth'
 			and planetClass.name ~= 'EM_Bary'
 			then
 				local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
-				local planetDir = (planetPos - earthPos):normalize()
+				local planetDir = planetPos:normalize()
 				if prevPlanetDir then
 					eq.orbitAxis += planetDir:cross(prevPlanetDir)
 				end
@@ -152,13 +152,13 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 			local vec2d = require 'vec-ffi.vec2d'
 			local pt2D = vec2d(eq.xyz.x, eq.xyz.y):normalize()
 
-			local sunDir = eq.planets[Planets.indexes.sun].pos - eq.planets[Planets.indexes.earth].pos
+			local sunDir = eq.planets[Planets.indexes.sun].pos
 			local sunDir2D = vec2d(sunDir.x, sunDir.y):normalize()
 			local sunAngle = math.deg(math.acos(pt2D:dot(sunDir2D)))
 			assert.index(quakesWithinDegreesOfSun, math.ceil(sunAngle))
 			quakesWithinDegreesOfSun[math.ceil(sunAngle)] += 1
 
-			local moonDir = eq.planets[Planets.indexes.moon].pos - eq.planets[Planets.indexes.earth].pos
+			local moonDir = eq.planets[Planets.indexes.moon].pos
 			local moonDir2D = vec2d(moonDir.x, moonDir.y):normalize()
 			local moonAngle = math.deg(math.acos(pt2D:dot(moonDir2D)))
 			assert.index(quakesWithinDegreesOfMoon, math.ceil(moonAngle))

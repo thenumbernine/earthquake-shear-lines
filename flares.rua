@@ -73,8 +73,7 @@ assert.eq(ffi.typeof(flare.ostime), ffi.typeof'int64_t')
 								p.pos = rotateFromSolarToEarthFrame(p.pos, flare.julianDay)
 							end
 							flare.planets = planets
-							local earthPos = planets[Planets.indexes.earth].pos
-							local sunPos = planets[Planets.indexes.sun].pos - earthPos
+							local sunPos = planets[Planets.indexes.sun].pos
 							local latrad, lonrad = cartesianToLatLonWGS84((sunPos / WGS84.a):unpack())
 							flare.latitude, flare.longitude = math.deg(latrad), math.deg(lonrad)
 --DEBUG:print('lat lon mag', flare.latitude, flare.longitude, flare.magn)

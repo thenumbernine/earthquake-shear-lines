@@ -219,7 +219,7 @@ M.calcCircles = |earthquakes, earthquakeIndex, earthquakeWindowStartIndex, earth
 		local circle = t.circle
 		for pi,p in ipairs(eq.planets) do
 			if p.name ~= 'earth' then
-				local planetDir = (p.pos - eq.planets[eq.planets.indexes.earth].pos):normalize()
+				local planetDir = p.pos:normalize()
 				local cosAngleFromAxis = circle.axis:dot(planetDir)	-- cos angle from axis = sine angle from plane
 				local angleFromAxis = math.acos(cosAngleFromAxis)
 				local angleFromArc = angleFromAxis - .5 * math.pi
