@@ -1181,7 +1181,7 @@ void main() {
 			clsize = self.clsize,
 			WGS84_e = math.sqrt(1. - charts.WGS84.b^2 / charts.WGS84.a^2),
 			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
-		
+
 			-- for small body calcs:
 			numSmallBodies = #smallbodies,
 			smallBodyTypeCode = require 'smallbodies'.smallBodyTypeCode,
@@ -1334,7 +1334,7 @@ void main() {
 	-- small body renderer ... actually going to use doubles ...
 	-- I guess I don't have to, but then I'd have to redo the SmallBody struct,
 	-- which I gotta do anyways ...
-	
+
 	self.smallbodiesCLBuf = self.env:buffer{
 		name = 'bodies',
 		type = 'SmallBody',
@@ -1358,7 +1358,7 @@ assert(glreport'here')
 	self.drawSmallBodiesSceneObj = GLSceneObject{
 		-- same as pairCrossPointShader but with a dvec for double smallbody inputs
 		-- honestly maybe I should use dvec's in all of them?
-		program = {	
+		program = {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = template([[
@@ -2072,12 +2072,11 @@ App.updateEarthquakeIndex = |:| do
 end
 
 App.refreshSmallBodies = |:|do
+	if not vars.drawSmallBodies then return end
 	local eq = earthquakes[vars.earthquakeIndex]
 	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
 	self.updateSmallBodiesKernel.obj:setArg(1, realsb(eq.julianDay))
-	local sunPos = eq.planets[Planets.indexes.sun].pos
-	local earthPos = eq.planets[Planets.indexes.earth].pos
-	self.updateSmallBodiesKernel.obj:setArg(2, realsb4(sunPos.x - earthPos.x, sunPos.y - earthPos.y, sunPos.z - earthPos.z, 0))
+	self.updateSmallBodiesKernel.obj:setArg(2, realsb4(eq.earthPosInSolarSystem.x, eq.earthPosInSolarSystem.y, eq.earthPosInSolarSystem.z, 0))
 	self.updateSmallBodiesKernel()
 	self.smallbodiesCLBuf:toCPU(smallbodies.v)	-- refresh pos & eccentricAnomaly
 	self.smallbodiesGLBuf
@@ -2419,8 +2418,10 @@ App.updateGUI = |:| do
 			ig.luatableCheckbox('drawAxisCloud', vars, 'drawAxisCloud')
 			inputFloat('axisCloudPointSize', vars, 'axisCloudPointSize')
 			inputFloat('axisCloudHeightScale', vars, 'axisCloudHeightScale')
-			
-			ig.luatableCheckbox('drawSmallBodies', vars, 'drawSmallBodies')
+
+			if ig.luatableCheckbox('drawSmallBodies', vars, 'drawSmallBodies') then
+				self:refreshSmallBodies()
+			end
 			inputFloat('smallBodyPointSize', vars, 'smallBodyPointSize')
 			inputFloat('smallBodyHeightScale', vars, 'smallBodyHeightScale')
 

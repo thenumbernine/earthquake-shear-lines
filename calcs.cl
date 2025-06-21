@@ -382,11 +382,11 @@ kernel void gradient(
 	int4 ixL = i;
 	ixL.x = (ixL.x + <?=clsize[1]?> - 1) % <?=clsize[1]?>;
 	int const index_xL = indexForInt4ForSize(ixL, <?=clsize[1]?>, <?=clsize[2]?>, 1);
-	
+
 	int4 ixR = i;
 	ixR.x = (ixR.x + 1) % <?=clsize[1]?>;
 	int const index_xR = indexForInt4ForSize(ixR, <?=clsize[1]?>, <?=clsize[2]?>, 1);
-	
+
 	int4 iyL = i;
 	iyL.y--;
 	if (iyL.y < 0) {
@@ -394,7 +394,7 @@ kernel void gradient(
 		iyL.x = <?=clsize[1]?> - 1 - iyL.x;
 	}
 	int const index_yL = indexForInt4ForSize(iyL, <?=clsize[1]?>, <?=clsize[2]?>, 1);
-	
+
 	int4 iyR = i;
 	iyR.y++;
 	if (iyR.y >= <?=clsize[2]?>) {
@@ -407,7 +407,7 @@ kernel void gradient(
 	real const f_xR = in[index_xR];
 	real const f_yL = in[index_yL];
 	real const f_yR = in[index_yR];
-	
+
 	real const df_dtheta = -(f_yR - f_yL) * invdtheta;
 	real const df_dphi = (f_xR - f_xL) * invdphi;
 	real const rSq = rsurf * rsurf;
@@ -498,7 +498,7 @@ realsb4 tiltFromSolarSystemToEarthFrame(realsb4 v) {
 kernel void updateSmallBodies(
 	global SmallBody * const bodies,
 	realsb const julianDay,
-	realsb4 const earthToSunVec
+	realsb4 const earthPosInSolarSystem
 ) {
 	initKernelForSize(<?=numSmallBodies?>, 1, 1);
 
@@ -603,19 +603,18 @@ kernel void updateSmallBodies(
 	// TODO also rotate by julian day fraction?
 	real4 pos = rotateFromSolarToEarthFrame(
 		tiltFromSolarSystemToEarthFrame(
-			(realsb4)(posX, posY, posZ, 0.) 
-			+ earthToSunVec
+			(realsb4)(posX - earthPosInSolarSystem.x, posY - earthPosInSolarSystem.y, posZ - earthPosInSolarSystem.z, 0.)
 		),
 		julianDay
 	);
 	ke->pos[0] = pos.x;
 	ke->pos[1] = pos.y;
 	ke->pos[2] = pos.z;
-	// I'm not using this ... but maybe I should be ... 
+	// I'm not using this ... but maybe I should be ...
 	//ke->vel[0] = velX + parent.vel.s[0];
 	//ke->vel[1] = velY + parent.vel.s[1];
 	//ke->vel[2] = velZ + parent.vel.s[2];
-	
+
 //TODO CL/GL interop if you do use this
 #if 0
 	// now update buffers

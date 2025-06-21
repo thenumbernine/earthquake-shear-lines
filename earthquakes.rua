@@ -119,6 +119,7 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		for i,p in ipairs(eq.planets) do
 			p.pos = rotateFromSolarToEarthFrame(p.pos - earthPos, eq.julianDay)
 		end
+		eq.earthPosInSolarSystem = earthPos	-- in earth frame but sun centered ...
 		eq.xyz = latLonToXYZ(eq)
 		eq.xyznorm = eq.xyz:normalize()
 
@@ -131,7 +132,7 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 		--]]
 		-- [[ using a sum of cross products of planets, assuming they are all in the plane ... shoudl I weight them? should I just use one or two important ones?
 		eq.orbitAxis = vec3d(0,0,0)
-		local prevPlanetDir 
+		local prevPlanetDir
 		for _,planetClass in ipairs(Planets.planetClasses) do
 			if planetClass.name ~= 'earth'
 			and planetClass.name ~= 'EM_Bary'
