@@ -452,6 +452,16 @@ typedef unsigned long uint64_t;
 
 <?=smallBodyTypeCode?>
 
+real4 rotateX(real4 const v, real const th) {
+	real const c = cos(th);
+	real const s = sin(th);
+	return (real4)(
+		v.x,
+		v.y * c - v.z * s,
+		v.y * s + v.z * c,
+		0.);
+}
+
 real4 rotateZ(real4 const v, real const th) {
 	real const c = cos(th);
 	real const s = sin(th);
@@ -461,6 +471,7 @@ real4 rotateZ(real4 const v, real const th) {
 		v.z,
 		0.);
 }
+
 // This is duplciated in basis.rua
 realsb4 rotateFromSolarToEarthFrame(
 	realsb4 v,
@@ -478,11 +489,16 @@ realsb4 rotateFromSolarToEarthFrame(
 	);
 }
 
+//also in earthquakes.rua
+realsb4 tiltFromSolarSystemToEarthFrame(realsb4 v) {
+	realsb th = M_PI / 180. * ((23 + 1/60*(26 + 1/60*(21.4119))));
+	return rotateX(v, th);
+}
 
 kernel void updateSmallBodies(
 	global SmallBody * const bodies,
 	realsb const julianDay,
-	realsb4 const sunPos
+	realsb4 const earthToSunVec
 ) {
 	initKernelForSize(<?=numSmallBodies?>, 1, 1);
 
@@ -586,7 +602,10 @@ kernel void updateSmallBodies(
 
 	// TODO also rotate by julian day fraction?
 	real4 pos = rotateFromSolarToEarthFrame(
-		(realsb4)(posX, posY, posZ, 0.) + sunPos,
+		tiltFromSolarSystemToEarthFrame(
+			(realsb4)(posX, posY, posZ, 0.) 
+			+ earthToSunVec
+		),
 		julianDay
 	);
 	ke->pos[0] = pos.x;

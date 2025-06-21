@@ -61,17 +61,21 @@ local gmtime = timer.gmtime
 local intptr = ffi.new'int[1]'
 local int = |x| do intptr[0] = x return intptr end
 
-local doubleptr = ffi.new'double[1]'
-local double = |x| do doubleptr[0] = x return doubleptr end
+local doubleptr = ffi.new'double[4]'
+local double = |x| do
+	doubleptr[0] = x
+	return doubleptr
+end
 
 local realsb, realsb4
 if ffi.typeof'realsb' == ffi.typeof'double' then
-	local vec4d = require 'vec-ffi.vec4d'
 	realsb = double
-	local realsb4ptr = vec4d()
 	realsb4 = |x,y,z,w| do
-		realsb4ptr:set(x,y,z,w)
-		return realsb4ptr.s
+		doubleptr[0] = x
+		doubleptr[1] = y
+		doubleptr[2] = z
+		doubleptr[3] = w
+		return doubleptr
 	end
 else
 	error'FIXME'
@@ -1334,11 +1338,14 @@ void main() {
 	self.smallbodiesCLBuf = self.env:buffer{
 		name = 'bodies',
 		type = 'SmallBody',
-		size = #smallbodies,
+		count = #smallbodies,
 		data = smallbodies.v,
 	}
 
-	self.updateSmallBodiesKernel = self.clprogramObj:kernel'updateSmallBodies'
+	self.updateSmallBodiesKernel = self.clprogramObj:kernel{
+		name = 'updateSmallBodies',
+		domain = self.env:domain{dim=1, size={#smallbodies}},
+	}
 	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
 
 	self.smallbodiesGLBuf = GLArrayBuffer{
@@ -1446,6 +1453,7 @@ void main() {
 	self.trackEarthquakeIndexes = table()
 
 	self:updateEarthquakeIndex()
+	self:refreshSmallBodies()	-- do a first recalc
 
 	self:refreshFBO()
 end
@@ -2067,8 +2075,9 @@ App.refreshSmallBodies = |:|do
 	local eq = earthquakes[vars.earthquakeIndex]
 	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
 	self.updateSmallBodiesKernel.obj:setArg(1, realsb(eq.julianDay))
-	local sun = eq.planets[Planets.indexes.sun]
-	self.updateSmallBodiesKernel.obj:setArg(2, realsb4(sun.pos.x, sun.pos.y, sun.pos.z, 0))
+	local sunPos = eq.planets[Planets.indexes.sun].pos
+	local earthPos = eq.planets[Planets.indexes.earth].pos
+	self.updateSmallBodiesKernel.obj:setArg(2, realsb4(sunPos.x - earthPos.x, sunPos.y - earthPos.y, sunPos.z - earthPos.z, 0))
 	self.updateSmallBodiesKernel()
 	self.smallbodiesCLBuf:toCPU(smallbodies.v)	-- refresh pos & eccentricAnomaly
 	self.smallbodiesGLBuf
