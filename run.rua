@@ -40,6 +40,18 @@ local checkDuration = 60*5	-- re-check every 5 mins
 
 local flares = require 'flares'
 
+local smallbodies = require 'smallbodies'.smallbodies
+
+local sunMass_kg = 1.9891e+30
+local AU_in_m = 149597870700
+local gravitationalConstant = 6.6738480e-11	-- m^3 / (kg * s^2)
+
+-- scale for the smallbody data, which is in meters
+local smalbodies_scale = 1 / AU_in_m
+local smallbodies_gravitationalParameter = gravitationalConstant * sunMass_kg	--assuming the comet mass is negligible, since the comet mass is not provided
+
+
+
 local calcCircles = require 'circles'
 
 local time = timer.time
@@ -58,6 +70,19 @@ local int = |x| do intptr[0] = x return intptr end
 
 local doubleptr = ffi.new'double[1]'
 local double = |x| do doubleptr[0] = x return doubleptr end
+
+local realsb, realsb4
+if ffi.typeof'realsb' == ffi.typeof'double' then
+	local vec4d = require 'vec-ffi.vec4d'
+	realsb = double
+	local realsb4ptr = vec4d()
+	realsb4 = |x,y,z,w| do
+		realsb4ptr:set(x,y,z,w)
+		return realsb4ptr.s
+	end
+else
+	error'FIXME'
+end
 
 for _,name in ipairs(chartCNames) do
 	chartCode ..= '\nuniform float weight_'..name..';'
@@ -306,6 +331,11 @@ local vars = table(
 		drawAxisCloud = false,	-- only really useful if you are looking at/ analyzing data in 3D spherical/WGS84 chart view
 		axisCloudPointSize = .02,
 		axisCloudHeightScale = -1,
+
+		drawSmallBodies = true,
+		smallBodyPointSize = .02,
+		smallBodyHeightScale = 1,
+
 		lat0 = 0,		-- degrees
 		lon0 = 157.5,	-- degrees
 		roll0 = 0,		-- degrees
@@ -790,7 +820,7 @@ require 'vec-ffi.vec2i'	-- time
 		assert.eq(#latlonradCPU, #earthquakes)
 		latlonradGPU:endUpdate()
 		timeGPU:endUpdate()
-		self.earthquakeLatLonPointObj.instanceCount = #latlonradCPU
+		self.earthquakeLatLonPointObj.geometry.instanceCount = #latlonradCPU
 	end
 
 	-- TODO for this and earthquakeLatLonPointObj, use instances
@@ -842,7 +872,7 @@ require 'vec-ffi.vec2i'	-- time
 		assert.eq(#latlonradCPU, #flares)
 		latlonradGPU:endUpdate()
 		timeGPU:endUpdate()
-		self.flaresLatLonPointObj.instanceCount = #latlonradCPU
+		self.flaresLatLonPointObj.geometry.instanceCount = #latlonradCPU
 	end
 
 	local numCircleDivs = 200
@@ -1105,7 +1135,7 @@ void main() {
 	}
 }
 ]],
-},
+		},
 		geometry = {
 			mode = gl.GL_TRIANGLE_STRIP,
 		},
@@ -1121,7 +1151,6 @@ void main() {
 		},
 	}
 	--]=]
-
 
 
 	-- while we're here, let's compute the tidal and gravitational forces of our planets ...
@@ -1145,6 +1174,28 @@ void main() {
 	}
 	print('use GL sharing?', self.env.useGLSharing)
 
+	self.clprogramObj = self.env:program{
+		code = template(assert(path'calcs.cl':read()), {
+			clnumber = clnumber,
+
+			-- for force calcs
+			useGLSharing = self.env.useGLSharing,
+			calcFlagsCode = calcFlagsCode,
+			clsize = self.clsize,
+			WGS84_e = math.sqrt(1. - charts.WGS84.b^2 / charts.WGS84.a^2),
+			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
+		
+			-- for small body calcs:
+			numSmallBodies = #smallbodies,
+			smallBodyTypeCode = require 'smallbodies'.smallBodyTypeCode,
+			smallbodies_gravitationalParameter = smallbodies_gravitationalParameter,
+			smallbodies_julianResetDay = dofile'../solarsystem/smallbody_t_desc.lua'.julianDay,
+			julianBaseAngleInRad = math.rad(require 'basis'.julianBaseAngle),	-- TODO don't touch the base angle ...
+		}),
+	}
+	self.clprogramObj:compile()
+
+
 	local internalFormat = self.env.useGLSharing and gl.GL_RGBA32F or gl.GL_R32F
 	--local internalFormat = gl.GL_R32F
 	local info = require 'gl.tex'.formatInfoForInternalFormat[internalFormat]
@@ -1161,22 +1212,10 @@ void main() {
 	}:unbind()
 	self.globeObj.texs[2] = self.forceTex
 
-	self.calcTideAndGravProgram = self.env:program{
-		code = template(assert(path'calcs.cl':read()), {
-			useGLSharing = self.env.useGLSharing,
-			calcFlagsCode = calcFlagsCode,
-			clsize = self.clsize,
-			clnumber = clnumber,
-			WGS84_e = math.sqrt(1. - charts.WGS84.b^2 / charts.WGS84.a^2),
-			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
-		}),
-	}
-	self.calcTideAndGravProgram:compile()
-
 	self.forceBuffer = self.env:buffer{name='forceBuffer', type='real'}
 	self.dforceBuffer = self.env:buffer{name='dforceBuffer', type='real'}	-- for when you use gradients
 
-	self.rescaleKernel = self.calcTideAndGravProgram:kernel'rescale'
+	self.rescaleKernel = self.clprogramObj:kernel'rescale'
 	self.rescaleKernel.obj:setArg(1, self.forceBuffer)
 
 	if self.env.useGLSharing then
@@ -1207,11 +1246,11 @@ assert.len(self.rescaleForceCPUBuf, self.clvolume)
 		size = {#Planets.planetClasses},
 	}	-- all planets, including earth, because maybe we want it too.
 
-	self.calcTideAndGravKernel = self.calcTideAndGravProgram:kernel'calcTideAndGrav'
+	self.calcTideAndGravKernel = self.clprogramObj:kernel'calcTideAndGrav'
 	self.calcTideAndGravKernel.obj:setArg(0, self.forceBuffer)
 	self.calcTideAndGravKernel.obj:setArg(1, self.planetPosRelEarthBuffer)
 
-	self.gradientKernel = self.calcTideAndGravProgram:kernel'gradient'
+	self.gradientKernel = self.clprogramObj:kernel'gradient'
 	self.gradientKernel.obj:setArg(0, self.dforceBuffer)
 	self.gradientKernel.obj:setArg(1, self.forceBuffer)
 
@@ -1293,6 +1332,121 @@ void main() {
 		},
 		vertexes = billboardPointVtxBuf,
 	}
+
+
+	-- small body renderer ... actually going to use doubles ...
+	-- I guess I don't have to, but then I'd have to redo the SmallBody struct,
+	-- which I gotta do anyways ...
+	
+	self.smallbodiesCLBuf = self.env:buffer{
+		name = 'bodies',
+		type = 'SmallBody',
+		size = #smallbodies,
+		data = smallbodies.v,
+	}
+
+	self.updateSmallBodiesKernel = self.clprogramObj:kernel'updateSmallBodies'
+	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
+
+	self.smallbodiesGLBuf = GLArrayBuffer{
+		size = #smallbodies * ffi.sizeof'SmallBody',
+		data = smallbodies.v,
+		--usage = gl.GL_STATIC_DRAW,
+	}:unbind()
+assert(glreport'here')
+
+	self.drawSmallBodiesSceneObj = GLSceneObject{
+		-- same as pairCrossPointShader but with a dvec for double smallbody inputs
+		-- honestly maybe I should use dvec's in all of them?
+		program = {	
+			version = 'latest',
+			precision = 'best',
+			vertexCode = template([[
+layout(location=0) in vec2 vertex;	// billboard texcoord in [-1,1]^2
+in dvec3 latlonheight;				// lat in deg, lon in deg, height in m
+
+out vec2 texcoordv;
+
+uniform mat4 mvMat;
+uniform mat4 mvProjMat;
+uniform bool chartIs3D;
+uniform vec3 latlonroll0;
+uniform float pointSize;
+uniform float heightScale;
+
+<?=chartCode?>
+
+void main() {
+	texcoordv = vertex;
+	vec2 latlonofs = applyLatLonRoll0(vec2(latlonheight.xy));
+
+	//////// BEGIN CODE MATCHING CHART CODE ABOVE
+	vec3 coords = vec3(
+		mod(latlonofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
+		mod(latlonofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
+		float(latlonheight.z * heightScale));							// height in meters
+
+	vec3 pos = 0.
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>(coords)
+<? end
+?>	;
+	pos /= WGS84_a;	//from meters to normalized coordinates
+
+	if (chartIs3D) {
+		pos = vec3(pos.z, pos.x, pos.y);
+	}
+
+#if 0	// use chart basis
+	mat3 e = mat3(vec3(0.), vec3(0.), vec3(0.))
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>_basis(vec3(coords.xy, 0.))
+<? end
+?>	;
+#else	// use modelview basis
+	mat3 e = transpose(mat3(mvMat));
+#endif
+	pos += (vertex.x * e[0] + vertex.y * e[1]) * pointSize;
+
+	gl_Position = mvProjMat * vec4(pos, 1.);
+}
+]],			{
+				chartCode = chartCode,
+				chartCNames = chartCNames,
+			}),
+			fragmentCode = [[
+in vec2 texcoordv;
+
+out vec4 fragColor;
+
+void main() {
+	float lenSq = dot(texcoordv, texcoordv);
+	if (lenSq > 1.) discard;
+	if (lenSq > .9*.9) {
+		fragColor = vec4(0., 0., 0., 1.);
+	} else {
+		fragColor = vec4(1., 1., 1., 1.);
+	}
+}
+]],
+		},
+		geometry = {
+			mode = gl.GL_TRIANGLE_STRIP,
+			instanceCount = #smallbodies,
+		},
+		vertexes = billboardPointVtxBuf,
+		attrs = {
+			latlonheight = {
+				divisor = 1,
+				buffer = self.smallbodiesGLBuf,
+				dim = 3,
+				type = ffi.typeof'realsb' == ffi.typeof'double' and gl.GL_DOUBLE or gl.GL_FLOAT,
+				stride = ffi.sizeof'SmallBody',
+				offset = ffi.offsetof('SmallBody', 'pos'),
+			},
+		},
+	}
+
 
 
 	self.trackEarthquakeIndexes = table()
@@ -1843,6 +1997,23 @@ print("...hasn't been dl'd, dl'ing...")
 	end
 	--]=]
 
+	if vars.drawSmallBodies then
+		local sceneObj = self.drawSmallBodiesSceneObj
+		if sceneObj.geometry.instanceCount > 0 then
+			for _,name in ipairs(weightFields) do
+				sceneObj.uniforms[name] = vars[name]
+			end
+			sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
+			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+			sceneObj.uniforms.mvMat = self.view.mvMat.ptr
+			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+			sceneObj.uniforms.pointSize = vars.smallBodyPointSize
+			sceneObj.uniforms.heightScale = vars.smallBodyHeightScale
+
+			sceneObj:draw()
+		end
+	end
+
 	self.fbo:unbind()
 
 	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
@@ -1890,10 +2061,27 @@ App.updateEarthquakeIndex = |:| do
 	-- TODO redo circle' touchingindexes to scan both + and - in time by 1 day
 	self:calcQuakeWindowIndexes()
 	self:refreshForceBuffer()
+	self:refreshSmallBodies()
 
 	if vars.recenterOn ~= recenterOnValues.none then
 		self:recenterOnQuake()
 	end
+end
+
+App.refreshSmallBodies = |:|do
+do return end
+	local eq = earthquakes[vars.earthquakeIndex]
+	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
+	self.updateSmallBodiesKernel.obj:setArg(1, realsb(eq.julianDay))
+	local sun = eq.planets[Planets.indexes.sun]
+	self.updateSmallBodiesKernel.obj:setArg(2, realsb4(sun.pos.x, sun.pos.y, sun.pos.z, 0))
+	self.updateSmallBodiesKernel()
+	self.smallbodiesCLBuf:toCPU(smallbodies.v)	-- refresh pos & eccentricAnomaly
+	self.smallbodiesGLBuf
+		:bind()
+		:updateData()
+		:unbind()
+
 end
 
 App.recenterOnQuake = |:|do
@@ -2226,6 +2414,10 @@ App.updateGUI = |:| do
 			ig.luatableCheckbox('drawAxisCloud', vars, 'drawAxisCloud')
 			inputFloat('axisCloudPointSize', vars, 'axisCloudPointSize')
 			inputFloat('axisCloudHeightScale', vars, 'axisCloudHeightScale')
+			
+			ig.luatableCheckbox('drawSmallBodies', vars, 'drawSmallBodies')
+			inputFloat('smallBodyPointSize', vars, 'smallBodyPointSize')
+			inputFloat('smallBodyHeightScale', vars, 'smallBodyHeightScale')
 
 			ig.igEndMenu()
 		end

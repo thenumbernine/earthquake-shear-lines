@@ -1,0 +1,76 @@
+--[[
+Load JPL SSD small bodies
+This data is currently spread out between my solarsystem project's 'jpl-ssd-smallbody' folder which does the downloading and binary packing and struct info writing ...
+... and my solarsystem-lua project's 'visualize-smallbodies.lua' which shows how to evaluate the data.
+Maybe I should merge those two into one separate project... hmm... to be responsible for the binary blob, kind of like solarsystem-lua is responsible for the ephemeris data ... and just require it into here... hmm...
+Yeah, the original download & parse script is horrible, and was reworked many times over for various things (including a BSP tree point cloud data set, and SQL output), so it's really a mess.
+--]]
+local vector = require 'ffi.cpp.vector-lua'
+
+-- here and in solarsystem/visualize-smallbodies.lua
+local smallBodyTypeCode = [[
+enum {
+	ORBIT_ELLIPTIC = 0,
+	ORBIT_HYPERBOLIC = 1,
+	ORBIT_PARABOLIC = 2,
+};
+
+// small body precision, separate of the force calc precision
+// at the moment this has to match what's in the file format fields in the struct:
+// tho TODO i should make separate file and runtime structs.
+// and TODO I should redo the file parsing.
+// and TODO I should just merge it from solarsystem/jpl-ssd-smallbody and solarsystem/visualize-smallbodies.lua into its own file.
+typedef double realsb;
+typedef double4 realsb4;
+
+typedef struct SmallBody {
+	double epoch;
+	double perihelionDistance;			// comets
+	double semiMajorAxis;				// asteroids
+	double eccentricity;
+	double inclination;
+	double argumentOfPeriapsis;
+	double longitudeOfAscendingNode;
+	double meanAnomalyAtEpoch;			// asteroids
+	double absoluteMagnitude;			// asteroids
+	double magnitudeSlopeParameter;		// asteroids
+	double timeOfPerihelionPassage;		// comets
+	int32_t bodyType;	// 0=comet, 1=numbered, 2=unnum
+
+// TODO everything below this line can be calculated by whats above, or can be stored elsewhere, and isn't needed for calculating and rendering
+// Everything above this line is (unpacked, 8 byte aligned) 96 bytes, so 1/3rd the data required.
+
+	int32_t horizonID;	//for numbered asteroids only
+	
+	// TODO maybe put these in a separate structure? since we're at 422 MB ...
+	int8_t name[44];
+	int8_t orbitSolutionReference[13];
+
+	//computed parameters
+	// TODO maybe we shouldn't store them? This is now at 422 MB
+	int64_t index;						// Wait, this is just the index into the array ... smh why did I do that?  Because I was reuisng the struct with other things that did lookup back into the struct ... smh ... 
+	double pos[3], vel[3], A[3], B[3];
+	double eccentricAnomaly;
+	double timeOfPeriapsisCrossing;
+	double meanAnomaly;
+	int32_t orbitType;	// 0=elliptic, 1=hyperbolic, 2=parabolic ... this can be derived from eccentricity
+	double orbitalPeriod;
+} SmallBody;
+]]
+
+ffi.cdef(smallBodyTypeCode)
+assert.eq(ffi.sizeof'SmallBody', 304)
+
+local smallBodyStr = assert(path'../solarsystem/smallbodies.raw':read())
+assert.eq(#smallBodyStr % ffi.sizeof'SmallBody', 0)
+local numSmallBodies = #smallBodyStr / ffi.sizeof'SmallBody'
+print('numSmallBodies', numSmallBodies)
+
+local smallbodies = vector'SmallBody'
+smallbodies:resize(numSmallBodies)
+ffi.copy(smallbodies.v, smallBodyStr, #smallBodyStr)
+
+return {
+	smallBodyTypeCode = smallBodyTypeCode,
+	smallbodies = smallbodies,
+}

@@ -1,6 +1,6 @@
 // everyone says this is a feature, but no one says how to use features ... do i define them? pass them as a cli arg? what?
 //#define __opencl_c_images
-#define __opencl_c_read_write_images
+//#define __opencl_c_read_write_images
 
 <?=calcFlagsCode?>
 
@@ -439,3 +439,181 @@ kernel void rescale(
 	outv[index] = result;
 <? end ?>
 }
+
+// I woulda thought OpenCL would have this already
+typedef char int8_t;
+typedef unsigned char uint8_t;
+typedef short int16_t;
+typedef unsigned short uint16_t;
+typedef int int32_t;
+typedef unsigned int uint32_t;
+typedef long int64_t;
+typedef unsigned long uint64_t;
+
+<?=smallBodyTypeCode?>
+
+real4 rotateZ(real4 const v, real const th) {
+	real const c = cos(th);
+	real const s = sin(th);
+	return (real4)(
+		v.x * c - v.y * s,
+		v.x * s + v.y * c,
+		v.z,
+		0.);
+}
+// This is duplciated in basis.rua
+realsb4 rotateFromSolarToEarthFrame(
+	realsb4 v,
+	real jday
+) {
+	return rotateZ(v,
+		<?=clnumber(julianBaseAngleInRad)?>
+		+ (fmod(jday, 1.) + .5) * -2. * M_PI * (
+			// convert from sinodic day (24 hours = 360 degrees x ())
+			// ... to sidereal day
+			1. / (1. - 1. / 365.25)
+			//1
+			//(1 - 1 / 365.25)
+		)
+	);
+}
+
+
+kernel void updateSmallBodies(
+	global SmallBody * const bodies,
+	realsb const julianDay,
+	realsb4 const sunPos
+) {
+	initKernelForSize(<?=numSmallBodies?>, 1, 1);
+
+	global SmallBody * const ke = bodies + index;
+
+	// wait does that mean resetDate should be whenever the A and B coeffs were generated?
+	// TODO fix this in visualize-smallbodies too?
+	// and TODO store it somewhere, maybe in the extra body_t_desc.lua file?
+	realsb timeAdvanced = julianDay - <?=clnumber(smallbodies_julianResetDay)?>;
+
+	int orbitType = ke->orbitType;
+
+	//https://en.wikipedia.org/wiki/Kepler%27s_laws_of_planetary_motion#Position_as_a_function_of_time
+
+	realsb meanAnomaly, meanMotion;
+	if (orbitType == ORBIT_ELLIPTIC) {
+		meanMotion = 2. * M_PI / ke->orbitalPeriod;
+		meanAnomaly = ke->meanAnomalyAtEpoch + meanMotion * (julianDay - ke->epoch);
+	} else if (orbitType == ORBIT_HYPERBOLIC) {
+		meanAnomaly = ke->meanAnomaly;
+		meanMotion = ke->meanAnomaly / (julianDay - ke->timeOfPeriapsisCrossing);
+	} else if (orbitType == ORBIT_PARABOLIC) {
+		//error'got a parabolic orbit'
+	} else {
+		//error'here'
+	}
+
+	realsb eccentricity = ke->eccentricity;
+
+	//solve eccentricAnomaly from meanAnomaly via Newton Rhapson
+	//for elliptical orbits:
+	//	f(E) = M - E + e sin E = 0
+	//	f'(E) = -1 + e cos E
+	//for parabolic oribts:
+	//	f(E) = M - E - E^3 / 3
+	//	f'(E) = -1 - E^2
+	//for hyperbolic orbits:
+	//	f(E) = M - e sinh(E) - E
+	//	f'(E) = -1 - e cosh(E)
+	realsb eccentricAnomaly = meanAnomaly;
+	for (int i = 0; i < 10; ++i) {
+		realsb func, deriv;
+		if (orbitType == ORBIT_PARABOLIC) {
+			func = meanAnomaly - eccentricAnomaly - eccentricAnomaly * eccentricAnomaly * eccentricAnomaly / 3.;
+			deriv = -1. - eccentricAnomaly * eccentricAnomaly;
+		} else if (orbitType == ORBIT_ELLIPTIC) {
+			func = meanAnomaly - eccentricAnomaly + eccentricity * sin(eccentricAnomaly);
+			deriv = -1. + eccentricity * cos(eccentricAnomaly);	//has zeroes ...
+		} else if (orbitType == ORBIT_HYPERBOLIC) {
+			func = meanAnomaly + eccentricAnomaly - eccentricity  * sinh(eccentricAnomaly);
+			deriv = 1. - eccentricity * cosh(eccentricAnomaly);
+		} else {
+			//error'here'
+		}
+
+		realsb delta = func / deriv;
+		if (fabs(delta) < 1e-15) break;
+		eccentricAnomaly -= delta;
+	}
+
+	//TODO don't use meanMotion for hyperbolic orbits
+	//realsb fractionOffset = timeAdvanced * meanMotion / (2 * M_PI);
+	realsb theta = timeAdvanced * meanMotion;
+	realsb pathEccentricAnomaly = eccentricAnomaly + theta;
+	global realsb * A = ke->A;
+	global realsb * B = ke->B;
+
+	//matches above
+	realsb dt_dE;
+	realsb semiMajorAxisCubed = ke->semiMajorAxis * ke->semiMajorAxis * ke->semiMajorAxis;
+	const realsb gravitationalParameter = <?=clnumber(smallbodies_gravitationalParameter)?>;
+	if (orbitType == ORBIT_PARABOLIC) {
+		dt_dE = sqrt(semiMajorAxisCubed / gravitationalParameter) * (1. + pathEccentricAnomaly * pathEccentricAnomaly);
+	} else if (orbitType == ORBIT_ELLIPTIC) {
+		dt_dE = sqrt(semiMajorAxisCubed / gravitationalParameter) * (1. - ke->eccentricity * cos(pathEccentricAnomaly));
+	} else if (orbitType == ORBIT_HYPERBOLIC) {
+		dt_dE = sqrt(semiMajorAxisCubed / gravitationalParameter) * (ke->eccentricity * cosh(pathEccentricAnomaly) - 1.);
+	}
+	realsb dE_dt = 1. / dt_dE;
+	realsb coeffA, coeffB;
+	//realsb coeffDerivA, coeffDerivB;
+	if (orbitType == ORBIT_PARABOLIC) {
+		//...?
+	} else if (orbitType == ORBIT_ELLIPTIC) {
+		coeffA = cos(pathEccentricAnomaly) - ke->eccentricity;
+		coeffB = sin(pathEccentricAnomaly);
+		//coeffDerivA = -sin(pathEccentricAnomaly) * dE_dt;
+		//coeffDerivB = cos(pathEccentricAnomaly) * dE_dt;
+	} else if (orbitType == ORBIT_HYPERBOLIC) {
+		coeffA = ke->eccentricity - cosh(pathEccentricAnomaly);
+		coeffB = sinh(pathEccentricAnomaly);
+		//coeffDerivA = -sinh(pathEccentricAnomaly) * dE_dt;
+		//coeffDerivB = cosh(pathEccentricAnomaly) * dE_dt;
+	}
+	realsb posX = A[0] * coeffA + B[0] * coeffB;
+	realsb posY = A[1] * coeffA + B[1] * coeffB;
+	realsb posZ = A[2] * coeffA + B[2] * coeffB;
+	//realsb velX = A[0] * coeffDerivA + B[0] * coeffDerivB;	//m/day
+	//realsb velY = A[1] * coeffDerivA + B[1] * coeffDerivB;
+	//realsb velZ = A[2] * coeffDerivA + B[2] * coeffDerivB;
+
+	// TODO also rotate by julian day fraction?
+	real4 pos = rotateFromSolarToEarthFrame(
+		(realsb4)(posX, posY, posZ, 0.) + sunPos,
+		julianDay
+	);
+	ke->pos[0] = pos.x;
+	ke->pos[1] = pos.y;
+	ke->pos[2] = pos.z;
+	// I'm not using this ... but maybe I should be ... 
+	//ke->vel[0] = velX + parent.vel.s[0];
+	//ke->vel[1] = velY + parent.vel.s[1];
+	//ke->vel[2] = velZ + parent.vel.s[2];
+	
+//TODO CL/GL interop if you do use this
+#if 0
+	// now update buffers
+	self.bodyToEarthArray[0+2*index].x = ke->pos[0];
+	self.bodyToEarthArray[0+2*index].y = ke->pos[1];
+	self.bodyToEarthArray[0+2*index].z = ke->pos[2];
+	self.bodyToEarthArray[1+2*index].x = ke->pos[0];
+	self.bodyToEarthArray[1+2*index].y = ke->pos[1];
+	self.bodyToEarthArray[1+2*index].z = ke->pos[2];
+#endif
+
+	//ke == this.keplerianOrbitalElements;
+	//ke->meanAnomaly = meanAnomaly;	// this doesn't change, does it?
+	ke->eccentricAnomaly = eccentricAnomaly;	// this does change ... eccentricAnomaly and pos
+	//ke->fractionOffset = fractionOffset;
+	// but TODO if I'm always recalculating the pos & vel from the time0 = A & B parameter generation time (solarsystem/jpl-ssd-smallbody/parse.lua)
+	//  then should I also recalculate from the initial eccentricAnomaly ?
+	//  or is the initial eccentricAnomaly always zero?
+}
+

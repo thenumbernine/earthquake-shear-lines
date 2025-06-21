@@ -65,6 +65,7 @@ M.julianBaseAngle = 97	-- why do I have this weird offset as the day base angle?
 
 -- Lua os.time calls mktime, which converts Y m d H M S to timestamp... with your timezone baked in.
 -- where to put this ... here? charts? ... planets.rua?
+-- This is duplicated in calcs.cl for the smallbodies
 M.rotateFromSolarToEarthFrame = |v, jday| do
 	v = M.rotateZ(v,
 		math.rad(M.julianBaseAngle)
