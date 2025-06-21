@@ -41,16 +41,9 @@ local checkDuration = 60*5	-- re-check every 5 mins
 local flares = require 'flares'
 
 local smallbodies = require 'smallbodies'.smallbodies
-
 local sunMass_kg = 1.9891e+30
-local AU_in_m = 149597870700
 local gravitationalConstant = 6.6738480e-11	-- m^3 / (kg * s^2)
-
--- scale for the smallbody data, which is in meters
-local smalbodies_scale = 1 / AU_in_m
 local smallbodies_gravitationalParameter = gravitationalConstant * sunMass_kg	--assuming the comet mass is negligible, since the comet mass is not provided
-
-
 
 local calcCircles = require 'circles'
 
@@ -1349,9 +1342,9 @@ void main() {
 	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
 
 	self.smallbodiesGLBuf = GLArrayBuffer{
-		size = #smallbodies * ffi.sizeof'SmallBody',
+		size = smallbodies:getNumBytes(),
 		data = smallbodies.v,
-		--usage = gl.GL_STATIC_DRAW,
+		usage = gl.GL_DYNAMIC_DRAW,
 	}:unbind()
 assert(glreport'here')
 
@@ -1363,7 +1356,7 @@ assert(glreport'here')
 			precision = 'best',
 			vertexCode = template([[
 layout(location=0) in vec2 vertex;	// billboard texcoord in [-1,1]^2
-in dvec3 latlonheight;				// lat in deg, lon in deg, height in m
+in dvec3 bodyPos;
 
 out vec2 texcoordv;
 
@@ -1378,13 +1371,16 @@ uniform float heightScale;
 
 void main() {
 	texcoordv = vertex;
-	vec2 latlonofs = applyLatLonRoll0(vec2(latlonheight.xy));
+	vec3 latlonheight = cartesianToLatLonWGS84(vec3(bodyPos / WGS84_a));
+	latlonheight.xy *= 180. / M_PI;	// TODO consistency of this function in all its implementations
+
+	vec2 latlonofs = applyLatLonRoll0(latlonheight.xy);
 
 	//////// BEGIN CODE MATCHING CHART CODE ABOVE
 	vec3 coords = vec3(
 		mod(latlonofs.x + 90., 180.) - 90.,	// lat in deg, [-90, 90]
 		mod(latlonofs.y + 180., 360.) - 180.,	// lon in deg, [-180, 180]
-		float(latlonheight.z * heightScale));							// height in meters
+		latlonheight.z * heightScale);							// height in meters
 
 	vec3 pos = 0.
 <? for _,name in ipairs(chartCNames) do
@@ -1432,11 +1428,10 @@ void main() {
 		},
 		geometry = {
 			mode = gl.GL_TRIANGLE_STRIP,
-			instanceCount = #smallbodies,
 		},
 		vertexes = billboardPointVtxBuf,
 		attrs = {
-			latlonheight = {
+			bodyPos = {
 				divisor = 1,
 				buffer = self.smallbodiesGLBuf,
 				dim = 3,
@@ -1446,7 +1441,6 @@ void main() {
 			},
 		},
 	}
-
 
 
 	self.trackEarthquakeIndexes = table()
@@ -1999,6 +1993,7 @@ print("...hasn't been dl'd, dl'ing...")
 
 	if vars.drawSmallBodies then
 		local sceneObj = self.drawSmallBodiesSceneObj
+		sceneObj.geometry.instanceCount = #smallbodies
 		if sceneObj.geometry.instanceCount > 0 then
 			for _,name in ipairs(weightFields) do
 				sceneObj.uniforms[name] = vars[name]
@@ -2069,7 +2064,6 @@ App.updateEarthquakeIndex = |:| do
 end
 
 App.refreshSmallBodies = |:|do
-do return end
 	local eq = earthquakes[vars.earthquakeIndex]
 	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
 	self.updateSmallBodiesKernel.obj:setArg(1, realsb(eq.julianDay))
@@ -2321,6 +2315,8 @@ App.updateGUI = |:| do
 				self.view.orbit:set(0,0,0)
 				self.view.pos:set(0,0,self.viewDist)
 			end
+			inputFloat('view znear', self.view, 'znear')
+			inputFloat('view zfar', self.view, 'zfar')
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
 			inputFloat('earthquakePointSize', vars, 'earthquakePointSize')
