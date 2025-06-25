@@ -13,6 +13,7 @@ local GLFBO = require 'gl.fbo'
 local GLGlobal = require 'gl.global'
 local glreport = require 'gl.report'
 local ig = require 'imgui'
+local vec2i = require 'vec-ffi.vec2i'
 local vec2f = require 'vec-ffi.vec2f'
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
@@ -20,7 +21,7 @@ local quatd = require 'vec-ffi.quatd'
 local vector = require 'ffi.cpp.vector-lua'
 
 local CLEnv = require 'cl.obj.env'
-local clnumber = require 'cl.obj.number'
+local glnumber = require 'gl.number'
 
 local Julian = require 'solarsystem.julian'
 
@@ -771,7 +772,6 @@ void main() {
 ]],
 		}:useNone()
 
-require 'vec-ffi.vec2i'	-- time
 	self.earthquakeLatLonPointObj = GLSceneObject{
 		program = self.latLonPointShader,
 		vertexes = billboardPointVtxBuf,
@@ -1153,39 +1153,55 @@ void main() {
 	--]=]
 
 
+	local internalFormat = self.env.useGLSharing and gl.GL_RGBA32F or gl.GL_R32F
+	--local internalFormat = gl.GL_R32F
+	local info = require 'gl.tex'.formatInfoForInternalFormat[internalFormat]
+	self.forceTexSize = vec2i(200, 200)
+	self.forceTex = GLTex2D{
+		width = self.forceTexSize.x,
+		height = self.forceTexSize.y,
+		magFilter = gl.GL_LINEAR,
+		--minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+		minFilter = gl.GL_NEAREST,
+		wrap = texWrap,
+		internalFormat = info.internalFormat,
+		format = info.format,
+		type = info.types[1],
+	}:unbind()
+	self.globeObj.texs[2] = self.forceTex
+
+
+
+	-- ok me trying to use compute instead of CL
+	-- advantage? easier interop
+	-- disadvantage?  GLSL is hardly C, let alone C++.
+	-- time to learn how to do SPIRV-for-shaders?
+
+
+	local GLGlobal = require 'gl.global'
+	local maxComputeWorkGroupCount = vec3i(GLGlobal:get'GL_MAX_COMPUTE_WORK_GROUP_COUNT')
+	-- each local size dim must be <= this
+	local maxComputeWorkGroupSize = vec3i(GLGlobal:get'GL_MAX_COMPUTE_WORK_GROUP_SIZE')
+	-- the product of all local size dims must be <= this
+	local maxComputeWorkGroupInvocations = GLGlobal:get'GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS'
+	local localSize = vec3i(256,256,1)	-- hmm, how do we pick this? at all like we do in OpenCL?
+
 	-- while we're here, let's compute the tidal and gravitational forces of our planets ...
 	-- TODO take it from my solarsystem project where I'm already doing this
 	-- but compute shader? does GL support double buffers? I don't think so . . .
 	-- maybe I have to use OpenCL now
 
-	self.clsize = {200,100}		-- or maybe "forceTexDim" or something
-	self.clvolume = self.clsize[1] * self.clsize[2]
-
-	-- hmm, seems the stupid graphics industry politics has destroyed opencl and forced my hand to either vulkan (shitty overly complicated to do simple things) or gl-compute (shitty for its lack of features and lack of support)
-	-- or maybe I can just blame AMD since this is supported just fine on Intel .. but without CL/GL interop ...
-	-- so for interop's sake and for AMD support's sake, might as well rewrite this as GL Compute
-	self.env = CLEnv{
-		size = self.clsize,
-		precision = cmdline.clprecision or 'double',
-		useGLSharing = cmdline.useGLSharing or false,	-- default to false since it doesn't seem to work for linux anymore (cuz opencl went to trash in the last 10 years)
-		sdlWindow = self.window,
-		sdlGLContext = self.sdlCtx,
-		-- TODO how about a getter-for-cmdline-obj ?
-		getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
-		getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
-		--deviceType = CLEnv.getDeviceTypeFromCmdLine(...),
-	}
-	print('using CL precision', self.env.real)
-	print('use CL/GL sharing?', self.env.useGLSharing)
-
-	self.clprogramObj = self.env:program{
-		code = template(assert(path'calcs.cl':read()), {
-			clnumber = clnumber,
-
-			-- for force calcs
-			useGLSharing = self.env.useGLSharing,
+	self.computeProg = GLProgram{
+		version = 'latest',
+		precision = 'best',
+		computeCode = template(assert(path'calcs.cl':read()), {
+			localSize = localSize,
+			glnumber = glnumber,
 			calcFlagsCode = calcFlagsCode,
-			clsize = self.clsize,
+			forceTexSize = self.forceTexSize,
+
+			WGS84_a = charts.WGS84.a,
+			WGS84_b = charts.WGS84.b,
 			WGS84_e = math.sqrt(1. - charts.WGS84.b^2 / charts.WGS84.a^2),
 			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
 
@@ -1197,27 +1213,12 @@ void main() {
 			julianBaseAngleInRad = math.rad(require 'basis'.julianBaseAngle),	-- TODO don't touch the base angle ...
 		}),
 	}
-	self.clprogramObj:compile()
+		:bindImage(0, self.forceTex, self.forceTex.internalFormat, gl.GL_WRITE_ONLY)
+		:bindImage(1, self.smallBodyKOETex, self.smallBodyKOETex.internalFormat, gl.GL_READ_ONLY)
+		:bindImage(1, self.smallBodyPosTex, self.smallBodyPosTex.internalFormat, gl.GL_WRITE_ONLY)
+		:useNone()
 
-
-	local internalFormat = self.env.useGLSharing and gl.GL_RGBA32F or gl.GL_R32F
-	--local internalFormat = gl.GL_R32F
-	local info = require 'gl.tex'.formatInfoForInternalFormat[internalFormat]
-	self.forceTex = GLTex2D{
-		width = self.clsize[1],
-		height = self.clsize[2],
-		magFilter = gl.GL_LINEAR,
-		--minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
-		minFilter = gl.GL_NEAREST,
-		wrap = texWrap,
-		internalFormat = info.internalFormat,
-		format = info.format,
-		type = info.types[1],
-	}:unbind()
-	self.globeObj.texs[2] = self.forceTex
-
-	self.forceBuffer = self.env:buffer{name='forceBuffer', type='real'}
-	self.dforceBuffer = self.env:buffer{name='dforceBuffer', type='real'}	-- for when you use gradients
+error[[It was at this point I realized that GL-compute is not going to be the best for porting this reduce function into ...]]
 
 	self.rescaleKernel = self.clprogramObj:kernel'rescale'
 	self.rescaleKernel.obj:setArg(1, self.forceBuffer)
