@@ -987,10 +987,13 @@ void main() {
 in vec4 colorg;		// using geometry shader
 in flat uint idg;
 //in vec4 colorv;	// not using geometry shader
+
 layout(location=0) out vec4 fragColor;
 layout(location=1) out uvec4 fragID;
+
 uniform float alpha;
 uniform uint idhi;
+
 void main() {
 	fragColor = colorg;
 	//fragColor = colorv;
@@ -1373,6 +1376,7 @@ layout(location=0) in vec2 vertex;	// billboard texcoord in [-1,1]^2
 in dvec3 bodyPos;
 
 out vec2 texcoordv;
+out flat uint idv;
 
 uniform mat4 mvMat;
 uniform mat4 mvProjMat;
@@ -1380,10 +1384,12 @@ uniform bool chartIs3D;
 uniform vec3 latlonroll0;
 uniform float pointSize;
 uniform float heightScale;
+uniform uint idbase;
 
 <?=chartCode?>
 
 void main() {
+	idv = uint(gl_InstanceID) + idbase;
 	texcoordv = vertex;
 	vec3 latlonheight = cartesianToLatLonWGS84(vec3(bodyPos / WGS84_a));
 	latlonheight.xy *= 180. / M_PI;	// TODO consistency of this function in all its implementations
@@ -1426,8 +1432,12 @@ void main() {
 			}),
 			fragmentCode = [[
 in vec2 texcoordv;
+in flat uint idv;
 
-out vec4 fragColor;
+layout(location=0) out vec4 fragColor;
+layout(location=1) out uvec4 fragID;
+
+uniform uint idhi;
 
 void main() {
 	float lenSq = dot(texcoordv, texcoordv);
@@ -1437,8 +1447,13 @@ void main() {
 	} else {
 		fragColor = vec4(1., 1., 1., 1.);
 	}
+	fragID = uvec4(idv, idhi, 0, 0);
 }
 ]],
+			uniforms = {
+				idbase = 0,
+				idhi = 4,	-- 4 == small bodies
+			},
 		},
 		geometry = {
 			mode = gl.GL_TRIANGLE_STRIP,
@@ -2250,12 +2265,15 @@ App.event = |:,e| do
 			self.mouseOverEarthquakeIndex = nil
 			self.mouseOverFlareIndex = nil
 			self.mouseOverGeodesicIndex = nil
+			self.mouseOverSmallBodyIndex = nil
 			if clickID.y == 1 then	-- earthquakes
 				self.mouseOverEarthquakeIndex = clickID.x
 			elseif clickID.y == 2 then	-- flares
 				self.mouseOverFlareIndex = clickID.x
 			elseif clickID.y == 3 then	-- great-arcs
 				self.mouseOverGeodesicIndex = clickID.x
+			elseif clickID.y == 4 then	-- great-arcs
+				self.mouseOverSmallBodyIndex = clickID.x
 			end
 		elseif e[0].type == sdl.SDL_EVENT_MOUSE_BUTTON_DOWN then
 			if self.mouseOverEarthquakeIndex then
@@ -2663,6 +2681,15 @@ App.updateGUI = |:| do
 			-- TODO tooltipButton text is always nothing so
 			ig.igText('#'..i1..' '..eq1.place)
 			ig.igText('-> #'..i2..' '..eq2.place)
+			ig.igEndTooltip()
+		end
+	elseif self.mouseOverSmallBodyIndex then
+		if self.mouseOverSmallBodyIndex >= 0
+		and self.mouseOverSmallBodyIndex < #smallbodies
+		then
+			local smallbody = smallbodies.v + self.mouseOverSmallBodyIndex
+			ig.igBeginTooltip()
+			ig.igText('smallbody '..ffi.string(smallbody.name))
 			ig.igEndTooltip()
 		end
 	end
