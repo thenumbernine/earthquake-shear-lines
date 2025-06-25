@@ -58,24 +58,27 @@ local gmtime = timer.gmtime
 --]]
 
 
-local intptr = ffi.new'int[1]'
-local int = |x| do intptr[0] = x return intptr end
-
-local doubleptr = ffi.new'double[4]'
-local double = |x| do
-	doubleptr[0] = x
-	return doubleptr
+local intptr = ffi.new'int32_t[1]'
+local clArgInt = |x| do
+	intptr[0] = x
+	return {ptr=intptr, size=ffi.sizeof'int32_t'}
 end
 
-local realsb, realsb4
+local doubleptr = ffi.new'double[4]'
+local clArgDouble = |x| do
+	doubleptr[0] = x
+	return {ptr=doubleptr + 0, size=ffi.sizeof'double'}
+end
+
+local clArgRealsb, clArgRealsb4
 if ffi.typeof'realsb' == ffi.typeof'double' then
-	realsb = double
-	realsb4 = |x,y,z,w| do
+	clArgRealsb = clArgDouble
+	clArgRealsb4 = |x,y,z,w| do
 		doubleptr[0] = x
 		doubleptr[1] = y
 		doubleptr[2] = z
 		doubleptr[3] = w
-		return doubleptr
+		return {ptr=doubleptr + 0, size=ffi.sizeof'realsb4'}
 	end
 else
 	error'FIXME'
@@ -1158,6 +1161,9 @@ void main() {
 	self.clsize = {200,100}		-- or maybe "forceTexDim" or something
 	self.clvolume = self.clsize[1] * self.clsize[2]
 
+	-- hmm, seems the stupid graphics industry politics has destroyed opencl and forced my hand to either vulkan (shitty overly complicated to do simple things) or gl-compute (shitty for its lack of features and lack of support)
+	-- or maybe I can just blame AMD since this is supported just fine on Intel .. but without CL/GL interop ...
+	-- so for interop's sake and for AMD support's sake, might as well rewrite this as GL Compute
 	self.env = CLEnv{
 		size = self.clsize,
 		precision = cmdline.clprecision or 'double',
@@ -1165,11 +1171,12 @@ void main() {
 		sdlWindow = self.window,
 		sdlGLContext = self.sdlCtx,
 		-- TODO how about a getter-for-cmdline-obj ?
-		--getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
-		--getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
+		getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
+		getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
 		--deviceType = CLEnv.getDeviceTypeFromCmdLine(...),
 	}
-	print('use GL sharing?', self.env.useGLSharing)
+	print('using CL precision', self.env.real)
+	print('use CL/GL sharing?', self.env.useGLSharing)
 
 	self.clprogramObj = self.env:program{
 		code = template(assert(path'calcs.cl':read()), {
@@ -2075,8 +2082,9 @@ App.refreshSmallBodies = |:|do
 	if not vars.drawSmallBodies then return end
 	local eq = earthquakes[vars.earthquakeIndex]
 	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
-	self.updateSmallBodiesKernel.obj:setArg(1, realsb(eq.julianDay))
-	self.updateSmallBodiesKernel.obj:setArg(2, realsb4(eq.earthPosInSolarSystem.x, eq.earthPosInSolarSystem.y, eq.earthPosInSolarSystem.z, 0))
+	self.updateSmallBodiesKernel.obj:setArg(1, clArgRealsb(eq.julianDay))
+	-- this is error'ing on AMD ... should size be sizeof the ptr or of the ptr's target, i.e. realsb4?  seems the two are equal for double<=>intptr_t
+	self.updateSmallBodiesKernel.obj:setArg(2, clArgRealsb4(eq.earthPosInSolarSystem.x, eq.earthPosInSolarSystem.y, eq.earthPosInSolarSystem.z, 0))
 	self.updateSmallBodiesKernel()
 	self.smallbodiesCLBuf:toCPU(smallbodies.v)	-- refresh pos & eccentricAnomaly
 	self.smallbodiesGLBuf
@@ -2153,8 +2161,8 @@ App.refreshForceBuffer = |:|do
 		end
 		self.planetPosRelEarthBuffer:fromCPU(self.planetPosRelEarthCPUBuf.v)
 
-		self.calcTideAndGravKernel.obj:setArg(2, int(calcFlags))
-		self.calcTideAndGravKernel.obj:setArg(3, int(vars.displayComponent))
+		self.calcTideAndGravKernel.obj:setArg(2, clArgInt(calcFlags))
+		self.calcTideAndGravKernel.obj:setArg(3, clArgInt(vars.displayComponent))
 		self.calcTideAndGravKernel()
 
 		if vars.calcSurfaceGradMagn then
@@ -2168,8 +2176,8 @@ App.refreshForceBuffer = |:|do
 		self.forceMin = self.reduceMin(self.forceBuffer.obj)
 		self.forceMax = self.reduceMax(self.forceBuffer.obj)
 
-		self.rescaleKernel.obj:setArg(2, double(self.forceMin))
-		self.rescaleKernel.obj:setArg(3, double(self.forceMax))
+		self.rescaleKernel.obj:setArg(2, clArgDouble(self.forceMin))
+		self.rescaleKernel.obj:setArg(3, clArgDouble(self.forceMax))
 
 		if self.env.useGLSharing then
 			gl.glFinish() -- necessary?
