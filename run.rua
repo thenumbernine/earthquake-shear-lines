@@ -2181,10 +2181,10 @@ App.refreshForceBuffer = |:|do
 
 		if self.env.useGLSharing then
 			gl.glFinish() -- necessary?
-			self.cmds:enqueueAcquireGLObjects{objs={self.forceTexCLImageGL}}
+			self.env.cmds[1]:enqueueAcquireGLObjects{objs={self.forceTexCLImageGL}}
 			self.rescaleKernel()
-			self.cmds:enqueueReleaseGLObjects{objs={self.forceTexCLImageGL}}
-			self.cmds:finish()
+			self.env.cmds[1]:enqueueReleaseGLObjects{objs={self.forceTexCLImageGL}}
+			self.env.cmds[1]:finish()
 		else
 			self.rescaleKernel()
 			self.rescaleForceBuffer:toCPU(self.rescaleForceCPUBuf.v)
