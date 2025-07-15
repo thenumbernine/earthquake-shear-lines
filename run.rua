@@ -32,11 +32,12 @@ local charts = require 'charts'.charts
 local chartCode = require 'charts'.chartCode
 local chartCNames = require 'charts'.chartCNames
 local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
+local latLonToXYZ = require 'charts'.latLonToXYZ
 
 local getDayCache = require 'earthquakes'.getDayCache
 local checkTime = require 'earthquakes'.checkTime
 local earthquakes = require 'earthquakes'.earthquakes
-local checkDuration = 60*5	-- re-check every 5 mins
+local checkDuration = 60*5	-- re-check every 5 mins ... disabled atm cuz it runs curl that stalls the main thread .... TODO do like DRAP query that doesnt stall the process.
 
 local flares = require 'flares'
 
@@ -273,6 +274,11 @@ local pickCircles = {
 	touchingAnyQuakeInWindow = 2,	-- show only great-arcs of other pairs that are within `quakeMinAngleDistFromQuakesThatFormedTheGeodesic` of any quake within the window
 }
 
+local clickMethod = {
+	selectQuake = 0,
+	selectSpatialQuery = 1,
+}
+
 local recenterOnNames = table{
 	'none',	-- = 0
 	'selectedQuake',	-- = 1
@@ -348,6 +354,8 @@ local vars = table(
 		earthquakeIndex = #earthquakes,
 
 		trackEarthquakeIndex = -1,
+	
+		clickMethod = clickMethod.selectQuake,
 	}
 ):setmetatable(nil)
 
@@ -600,7 +608,8 @@ void main() {
 
 			fragmentCode = template[[
 in vec2 texcoordg;
-out vec4 fragColor;
+layout(location=0) out vec4 fragColor;
+layout(location=2) out vec2 fragLatLon;
 
 uniform sampler2D earthTex;
 
@@ -626,6 +635,12 @@ void main() {
 	fragColor = mix(fragColor, drapColor, drapTexAlpha);
 
 	fragColor.a = alpha;
+
+	//texcoord is (lat, lon) in [0, 1], so undo it
+	fragLatLon = vec2(
+		(texcoordg.y - .5) * 180.,
+		(texcoordg.x - .5) * 360.
+	);
 }
 ]],
 			uniforms = {
@@ -1511,6 +1526,18 @@ App.refreshFBO=|:|do
 		type = info.types[1],
 	}:unbind()
 
+	-- write out the lat/lon of the chart here, for picking / interacting
+	local info = GLTex2D.formatInfoForInternalFormat[gl.GL_RG32F]
+	self.latLonFBOTex = GLTex2D{
+		width = self.width,
+		height = self.height,
+		magFilter = gl.GL_NEAREST,
+		minFilter = gl.GL_NEAREST,
+		internalFormat = info.internalFormat,
+		format = info.format,
+		type = info.types[1],
+	}:unbind()
+
 	self.drawFBOObj.texs[1] = self.colorFBOTex
 --self.drawFBOObj.texs[1] = self.clickIDFBOTex
 
@@ -1520,9 +1547,11 @@ App.refreshFBO=|:|do
 		useDepth = true,
 	}
 		:bind()
+		-- TOOD how about together :setColorAttachmentsAndDrawBuffers to do both these things in one call?
 		:setColorAttachmentTex2D(self.colorFBOTex.id, 0)
 		:setColorAttachmentTex2D(self.clickIDFBOTex.id, 1)
-		:setDrawBuffers(gl.GL_COLOR_ATTACHMENT0, gl.GL_COLOR_ATTACHMENT1)
+		:setColorAttachmentTex2D(self.latLonFBOTex.id, 2)
+		:setDrawBuffers(gl.GL_COLOR_ATTACHMENT0, gl.GL_COLOR_ATTACHMENT1, gl.GL_COLOR_ATTACHMENT2)
 		:unbind()
 end
 
@@ -1533,6 +1562,18 @@ end
 
 -- list of earthquakes[vars.earthquakeIndex].allCircles[] that are to be displayed
 local circles
+
+-- geoquery cone
+local selectSpatialLatLonDown = vec2d()
+local selectSpatialLatLonUp = vec2d()
+local selectSpatialAngle = math.huge	-- huge <=> cleared query
+
+local isInSelectSpatial = |eq| do
+	if selectSpatialAngle > 180 then return true end
+	local downxyz = latLonToXYZ(selectSpatialLatLonDown:unpack()):normalize()
+	local eqxyz = latLonToXYZ(eq.latitude, eq.longitude):normalize()
+	return math.deg(math.acos(downxyz:dot(eqxyz))) <= selectSpatialAngle
+end
 
 -- refresh the list of what circles we want to display right now
 -- this is either all circles in the last period (3 days? 1 day? etc)
@@ -1671,6 +1712,20 @@ App.refreshVisibleCircles = |:| do
 			colorCPU:emplace_back():set(1,1,1)
 			--influenceCPU:emplace_back()[0] = 1
 			centerPosCPU:emplace_back():set(0,0,0,1)
+		end
+
+		-- finally finall finally finally, geospatial query selector
+		-- TODO how about refreshing *ONLY THIS* when we drag the mouse, and not *EVERYTHING*
+		if selectSpatialAngle <= 180 then
+			local downxyz = latLonToXYZ(selectSpatialLatLonDown:unpack()):normalize()
+			local axis2 = basisFor(downxyz)
+			local axis3 = downxyz:cross(axis2)
+			axisCPU:emplace_back():set(downxyz)
+			axis2CPU:emplace_back():set(axis2:unpack())
+			axis3CPU:emplace_back():set(axis3:unpack())
+			colorCPU:emplace_back():set(0,1,1)	-- TODO pick a color that isn't used by any planets
+			--influenceCPU:emplace_back()[0] = 1
+			centerPosCPU:emplace_back():set(0,0,0,1)	
 		end
 
 		axisGPU:endUpdate()
@@ -1968,6 +2023,13 @@ print("...hasn't been dl'd, dl'ing...")
 			sceneObj.geometry.instanceOffset = self.circlesObjInstanceCount + #drawPlanetClasses * #drawPlanetAngles
 			sceneObj:draw()
 
+			-- last draw the geoselector query
+			if selectSpatialAngle <= 180 then
+				sceneObj.uniforms.declinationFromAxis = math.rad(selectSpatialAngle)	-- why again is this the only radians thing here?
+				sceneObj.geometry.instanceOffset += 1	-- one past orbital plane
+				sceneObj:draw()
+			end
+
 			sceneObj.geometry.instanceCount = nil
 			sceneObj.geometry.instanceOffset = nil
 		end
@@ -2259,52 +2321,129 @@ end
 
 local vec4ui = require 'vec-ffi.create_vec3'{dim=4, ctype='uint32_t'}
 local clickID = vec4ui()
+
+local latLon = vec2f()	-- must be float[2] for glReadPixels
+App.updateMouseLatLon=|:,mx,my|do
+	self.fbo:bind()
+	assert(self.fbo:check())
+	gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT2)	-- read latLonFBOTex
+	gl.glReadPixels(mx, self.height - 1 - my, 1, 1, self.latLonFBOTex.format, self.latLonFBOTex.type, latLon.s)
+	self.fbo:unbind()
+	gl.glReadBuffer(gl.GL_BACK)
+end
+
 App.event = |:,e| do
-	App.super.event(self, e)
-	if not ig.igGetIO()[0].WantCaptureKeyboard then
+	-- same as in glapp.orbit
+	local canHandleMouse = not ig.igGetIO()[0].WantCaptureMouse
+	local canHandleKeyboard = not ig.igGetIO()[0].WantCaptureKeyboard
+
+	if vars.clickMethod == clickMethod.selectSpatialQuery 
+	and selectSpatialAngle <= 180	-- if we've already done a down-click...
+	then
+		-- ok if we are in select quake mode then we don't want mouse drag (orbit behavior) to do stuff so ...
+		-- so only call the updates except orbit's update
+		-- App = this class
+		-- .super = subclass w/ imgui.appwithorbit's args
+		-- .super = subclass of template built by glapp.orbitbehavior 
+		-- .super = template built by glapp.orbitbehavior 
+		-- .super = ImGuiApp
+		-- .super = GLApp
+		-- .super = SDLApp
+		-- kind of a mess esp due to the 'templating' (i.e. function-generated parameterized subclasses)
+		App.super.super.super.event(self, e, 'selectSpatialQuery')
+	else
+		App.super.event(self, e)
+	end
+
+	if canHandleKeyboard then
 		if e[0].type == sdl.SDL_EVENT_KEY_DOWN then
 			if e[0].key.key == sdl.SDLK_LEFT then
-				vars.earthquakeIndex -= 1
+				repeat
+					vars.earthquakeIndex -= 1
+				until vars.earthquakeIndex < 1
+				or isInSelectSpatial(earthquakes[vars.earthquakeIndex])
+
 				self:updateEarthquakeIndex()
 			elseif e[0].key.key == sdl.SDLK_RIGHT then
-				vars.earthquakeIndex += 1
+				repeat
+					vars.earthquakeIndex += 1
+				until vars.earthquakeIndex > #earthquakes
+				or isInSelectSpatial(earthquakes[vars.earthquakeIndex])
+
 				self:updateEarthquakeIndex()
 			elseif e[0].key.key == sdl.SDLK_S then
 				self:screenshot()
 			end
 		end
 	end
-	if not ig.igGetIO()[0].WantCaptureMouse then
+	if canHandleMouse then
 		if e[0].type == sdl.SDL_EVENT_MOUSE_MOTION then
-			local readBuffer = GLGlobal:get'GL_READ_BUFFER'	-- GL_BACK ... is that always the default?
-			self.fbo:bind()
-			assert(self.fbo:check())
-			gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT1)	-- read clickIDFBOTex
+			if vars.clickMethod == clickMethod.selectQuake then
+				--local readBuffer = GLGlobal:get'GL_READ_BUFFER'	-- GL_BACK ... is that always the default?
+				self.fbo:bind()
+				assert(self.fbo:check())
+				gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT1)	-- read clickIDFBOTex
 
-			local mx = e[0].motion.x
-			local my = self.height - 1 - e[0].motion.y
-			gl.glReadPixels(mx, my, 1, 1, self.clickIDFBOTex.format, self.clickIDFBOTex.type, clickID.s)
+				local mx = e[0].motion.x
+				local my = self.height - 1 - e[0].motion.y
+				gl.glReadPixels(mx, my, 1, 1, self.clickIDFBOTex.format, self.clickIDFBOTex.type, clickID.s)
 
-			self.fbo:unbind()
-			gl.glReadBuffer(readBuffer)
+				self.fbo:unbind()
+				--gl.glReadBuffer(readBuffer)
+				gl.glReadBuffer(gl.GL_BACK)
 
-			self.mouseOverEarthquakeIndex = nil
-			self.mouseOverFlareIndex = nil
-			self.mouseOverGeodesicIndex = nil
-			self.mouseOverSmallBodyIndex = nil
-			if clickID.y == 1 then	-- earthquakes
-				self.mouseOverEarthquakeIndex = clickID.x
-			elseif clickID.y == 2 then	-- flares
-				self.mouseOverFlareIndex = clickID.x
-			elseif clickID.y == 3 then	-- great-arcs
-				self.mouseOverGeodesicIndex = clickID.x
-			elseif clickID.y == 4 then	-- great-arcs
-				self.mouseOverSmallBodyIndex = clickID.x
+				self.mouseOverEarthquakeIndex = nil
+				self.mouseOverFlareIndex = nil
+				self.mouseOverGeodesicIndex = nil
+				self.mouseOverSmallBodyIndex = nil
+				if clickID.y == 1 then	-- earthquakes
+					self.mouseOverEarthquakeIndex = clickID.x
+				elseif clickID.y == 2 then	-- flares
+					self.mouseOverFlareIndex = clickID.x
+				elseif clickID.y == 3 then	-- great-arcs
+					self.mouseOverGeodesicIndex = clickID.x
+				elseif clickID.y == 4 then	-- great-arcs
+					self.mouseOverSmallBodyIndex = clickID.x
+				end
+			elseif vars.clickMethod == clickMethod.selectSpatialQuery 
+			and selectSpatialAngle <= 180	-- if we've already done a down-click...
+			then
+				self:updateMouseLatLon(e[0].motion.x, e[0].motion.y)
+			
+				-- convert both to xyznorm and update inner product angle between them
+				selectSpatialLatLonUp:set(latLon:unpack())
+				local downxyz = latLonToXYZ(selectSpatialLatLonDown:unpack()):normalize()
+				local upxyz = latLonToXYZ(selectSpatialLatLonUp:unpack()):normalize()
+				selectSpatialAngle = math.deg(math.acos(downxyz:dot(upxyz)))
+				self:refreshVisibleCircles()	-- update current selector circle
 			end
 		elseif e[0].type == sdl.SDL_EVENT_MOUSE_BUTTON_DOWN then
-			if self.mouseOverEarthquakeIndex then
-				vars.earthquakeIndex = self.mouseOverEarthquakeIndex
-				self:updateEarthquakeIndex()
+			if vars.clickMethod == clickMethod.selectQuake then
+				if self.mouseOverEarthquakeIndex then
+					vars.earthquakeIndex = self.mouseOverEarthquakeIndex
+					self:updateEarthquakeIndex()
+				end
+			elseif vars.clickMethod == clickMethod.selectSpatialQuery then
+				self:updateMouseLatLon(e[0].button.x, e[0].button.y)
+				selectSpatialLatLonDown:set(latLon:unpack())
+				selectSpatialLatLonUp:set(latLon:unpack())
+				selectSpatialAngle = 0
+				self:refreshVisibleCircles()	-- adds new circle to the end of the list.
+			end
+		elseif e[0].type == sdl.SDL_EVENT_MOUSE_BUTTON_UP then
+			if vars.clickMethod == clickMethod.selectSpatialQuery then
+				self:updateMouseLatLon(e[0].button.x, e[0].button.y)
+		
+				-- convert both to xyznorm and update inner product angle between them
+				selectSpatialLatLonUp:set(latLon:unpack())
+				local downxyz = latLonToXYZ(selectSpatialLatLonDown:unpack()):normalize()
+				local upxyz = latLonToXYZ(selectSpatialLatLonUp:unpack()):normalize()
+				selectSpatialAngle = math.deg(math.acos(downxyz:dot(upxyz)))
+				self:refreshVisibleCircles()	-- update current selector circle 
+
+				-- TODO here - filter out quakes with the filter
+				
+				vars.clickMethod = clickMethod.selectQuake
 			end
 		end
 	end
@@ -2321,6 +2460,26 @@ App.updateGUI = |:| do
 	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
 	if ig.igBeginMainMenuBar() then
 		if ig.igBeginMenu'quakes:' then
+
+			if vars.clickMethod ~= clickMethod.selectSpatialQuery then
+				if ig.igButton('Geo Query...') then
+					vars.clickMethod = clickMethod.selectSpatialQuery
+
+					selectSpatialAngle = math.huge
+					self:refreshVisibleCircles()	-- clear old circle
+				end
+			else
+				if ig.igButton('Cancel') then
+					vars.clickMethod = clickMethod.selectQuake
+				end
+			end
+			if selectSpatialAngle <= 180 then
+				ig.igSameLine()
+				if ig.igButton('Clear Query') then
+					selectSpatialAngle = math.huge
+					self:refreshVisibleCircles()	-- clear old circle
+				end
+			end
 
 			local changed
 			local oldEarthquakeIndex = vars.earthquakeIndex

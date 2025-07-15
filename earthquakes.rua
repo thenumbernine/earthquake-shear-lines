@@ -120,7 +120,7 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 			p.pos = rotateFromSolarToEarthFrame(p.pos - earthPos, eq.julianDay)
 		end
 		eq.earthPosInSolarSystem = earthPos	-- in earth frame but sun centered ...
-		eq.xyz = latLonToXYZ(eq)
+		eq.xyz = latLonToXYZ(eq.latitude, eq.longitude)
 		eq.xyznorm = eq.xyz:normalize()
 
 		-- save orbital plane for later

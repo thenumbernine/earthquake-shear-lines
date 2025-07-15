@@ -37,9 +37,9 @@ else
 end
 
 local WGS84 = charts.WGS84
-local latLonToXYZ = |eq| do
+local latLonToXYZ = |lat, lon, height| do
 	return vec3d(
-		WGS84:chart(eq.latitude, eq.longitude, 0)
+		WGS84:chart(lat, lon, height or 0)
 	) / WGS84.a
 end
 
