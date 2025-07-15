@@ -295,7 +295,7 @@ local vars = table(
 		greatArcAlpha = .1,
 		lineWidth = 1,
 		angleFade = 1,
-		drawFlares = true,
+		drawFlares = false,
 		flarePointSize = .005,
 		forceTexAlpha = .5,
 
@@ -332,7 +332,7 @@ local vars = table(
 		axisCloudPointSize = .02,
 		axisCloudHeightScale = -1,
 
-		drawSmallBodies = true,
+		drawSmallBodies = false,
 		smallBodyPointSize = .02,
 		smallBodyHeightScale = 1,
 
@@ -363,35 +363,37 @@ App.viewDist = cmdline.viewDist or 2
 App.width = cmdline.width or App.width
 App.height = cmdline.height or App.height
 
+local earthquakeWindowStartTime
+local earthquakeWindowEndTime
 local earthquakeWindowStartIndex
 local earthquakeWindowEndIndex
 local flareWindowStartIndex = 0
 local flareWindowEndIndex = 0
 App.calcQuakeWindowIndexes = |:|do
 	-- TODO with bisect
-	local windowStartTime = earthquakes[vars.earthquakeIndex].ostime - calcCircles.prevTimeWindowInDays * dayInSec
-	local windowEndTime = earthquakes[vars.earthquakeIndex].ostime + calcCircles.nextTimeWindowInDays * dayInSec
+	earthquakeWindowStartTime = earthquakes[vars.earthquakeIndex].ostime - calcCircles.prevTimeWindowInDays * dayInSec
+	earthquakeWindowEndTime = earthquakes[vars.earthquakeIndex].ostime + calcCircles.nextTimeWindowInDays * dayInSec
 
 	earthquakeWindowStartIndex = vars!.earthquakeIndex
 	for i=vars.earthquakeIndex,1,-1 do
-		if earthquakes[i].ostime < windowStartTime then break end
+		if earthquakes[i].ostime < earthquakeWindowStartTime then break end
 		earthquakeWindowStartIndex = i
 	end
 	earthquakeWindowEndIndex = vars!.earthquakeIndex
 	for i=vars.earthquakeIndex,#earthquakes do
-		if earthquakes[i].ostime > windowEndTime then break end
+		if earthquakes[i].ostime > earthquakeWindowEndTime then break end
 		earthquakeWindowEndIndex = i
 	end
 
 	if #flares > 0 then
 		flareWindowStartIndex = #flares
 		for i=#flares,1,-1 do
-			if flares[i].ostime < windowStartTime then break end
+			if flares[i].ostime < earthquakeWindowStartTime then break end
 			flareWindowStartIndex = i
 		end
 		flareWindowEndIndex = flareWindowStartIndex
 		for i=flareWindowStartIndex,#flares do
-			if flares![i]!.ostime > windowEndTime then break end
+			if flares![i]!.ostime > earthquakeWindowEndTime then break end
 			flareWindowEndIndex = i
 		end
 	end
@@ -885,7 +887,7 @@ layout(location=0) in float vertex;
 
 in vec3 axis, axis2, axis3;	// axis dual = basis of circle
 in vec3 color;	// base color
-in float influence;	// additive influence,
+//in float influence;	// additive influence,
 in vec4 centerPos;	// .w = cos(centerAngle)
 
 out vec3 posv;
@@ -912,7 +914,8 @@ void main() {
 	vec3 v = axis * decl + phi_r * (axis2 * cos(theta) + axis3 * sin(theta));
 	float cosAngle = dot(v, centerPos.xyz);
 	float alpha = clamp(cosAngle * centerPos.w + angleFade, 0., 1.);
-	colorv = vec4(color * influence, alpha);
+	//colorv = vec4(color * influence, alpha);	//influence scalar with additive blending just washes colors to white, so don't use it.
+	colorv = vec4(color, alpha);
 
 	vec2 latlon = cartesianToLatLonWGS84(v).xy;
 	// ... to degrees
@@ -985,8 +988,8 @@ void main() {
 --]=]
 			fragmentCode = [[
 in vec4 colorg;		// using geometry shader
-in flat uint idg;
 //in vec4 colorv;	// not using geometry shader
+in flat uint idg;
 
 layout(location=0) out vec4 fragColor;
 layout(location=1) out uvec4 fragID;
@@ -1591,8 +1594,8 @@ App.refreshVisibleCircles = |:| do
 		local axis3CPU = axis3GPU:beginUpdate()
 		local colorGPU = self.circlesObj.attrs.color.buffer
 		local colorCPU = colorGPU:beginUpdate()
-		local influenceGPU = self.circlesObj.attrs.influence.buffer
-		local influenceCPU = influenceGPU:beginUpdate()
+		--local influenceGPU = self.circlesObj.attrs.influence.buffer
+		--local influenceCPU = influenceGPU:beginUpdate()
 		local centerPosGPU = self.circlesObj.attrs.centerPos.buffer
 		local centerPosCPU = centerPosGPU:beginUpdate()
 
@@ -1600,15 +1603,38 @@ App.refreshVisibleCircles = |:| do
 			axisCPU:emplace_back():set(c.axis:unpack())
 			axis2CPU:emplace_back():set(c.axis2:unpack())
 			axis3CPU:emplace_back():set(c.axis3:unpack())
+
 			local t1 = earthquakes[c.indexes[1]].ostime
 			local t2 = earthquakes[c.indexes[2]].ostime
 			local tavg = (t1 + t2) >> 1
+			--[[
 			if tavg < eq.ostime then
 				colorCPU:emplace_back():set(c.color.x, 0, 0)
 			else
 				colorCPU:emplace_back():set(0, c.color.y, 0)
 			end
-			influenceCPU:emplace_back()[0] = c.influence
+			--]]
+			-- [[
+			--local tfrac = tonumber(tavg - earthquakeWindowStartTime) / tonumber(earthquakeWindowEndTime - earthquakeWindowStartTime)
+			-- since this is red -> grey -> green, make sure grey is always at the current selected earthquakes time
+			local tfrac
+			if tavg < eq.ostime then
+				tfrac = tonumber(tavg - eq.ostime) / tonumber(eq.ostime - earthquakeWindowStartTime)	-- [-1, 0]
+--DEBUG:assert(-1 <= tfrac and tfrac <= 0)
+			else
+				tfrac = tonumber(tavg - eq.ostime) / tonumber(earthquakeWindowEndTime - eq.ostime)	-- [0, 1]
+--DEBUG:assert(0 <= tfrac and tfrac <= 1)
+			end
+			-- don't both with c.color here ... or ever?
+			local signtfrac = math.sign(tfrac)
+			local powtfrac = signtfrac * math.abs(tfrac) ^ 1.5
+			local r = .5 - .5 * powtfrac
+			local g = .5 + .5 * powtfrac
+			local b = math.min(r, g)
+			colorCPU:emplace_back():set(r, g, b)
+			--]]
+
+			--influenceCPU:emplace_back()[0] = c.influence
 			centerPosCPU:emplace_back():set(
 				c.centerPos.x,
 				c.centerPos.y,
@@ -1630,7 +1656,7 @@ App.refreshVisibleCircles = |:| do
 				axis2CPU:emplace_back():set(axis2:unpack())
 				axis3CPU:emplace_back():set(axis3:unpack())
 				colorCPU:emplace_back():set(table.unpack(planetClass.color))
-				influenceCPU:emplace_back()[0] = 1
+				--influenceCPU:emplace_back()[0] = 1
 				centerPosCPU:emplace_back():set(0,0,0,1)
 			end
 		end
@@ -1643,7 +1669,7 @@ App.refreshVisibleCircles = |:| do
 			axis2CPU:emplace_back():set(axis2:unpack())
 			axis3CPU:emplace_back():set(axis3:unpack())
 			colorCPU:emplace_back():set(1,1,1)
-			influenceCPU:emplace_back()[0] = 1
+			--influenceCPU:emplace_back()[0] = 1
 			centerPosCPU:emplace_back():set(0,0,0,1)
 		end
 
@@ -1651,7 +1677,7 @@ App.refreshVisibleCircles = |:| do
 		axis2GPU:endUpdate()
 		axis3GPU:endUpdate()
 		colorGPU:endUpdate()
-		influenceGPU:endUpdate()
+		--influenceGPU:endUpdate()
 		centerPosGPU:endUpdate()
 	end
 	--]]

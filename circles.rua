@@ -99,7 +99,7 @@ M.calcCirclesInWindow = |earthquakes, earthquakeWindowStartIndex, earthquakeWind
 						angle = math.pi * .5,
 						indexes = {i, j},
 						-- [[ used for rendering
-						influence = influence,
+						influence = influence,	-- TODO not really used anymore
 						color = vec3d(1, .3, .07),
 						centerPos = (v + v2):normalize(),	-- midpoint between two earthquake lines
 						centerAngle = .5 * angle,			-- half the angle between them
