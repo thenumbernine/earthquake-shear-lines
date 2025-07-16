@@ -298,9 +298,9 @@ local vars = table(
 		drawEarthquakes = true,
 		earthquakePointSize = .005,		-- but make it proportional to size in view maybe? like USGS does?
 		drawGreatArcs = true,
-		greatArcAlpha = .1,
-		lineWidth = 1,
-		angleFade = 1,
+		greatArcAlpha = 10,
+		lineWidth = 3,
+		angleFade = 10,
 		drawFlares = false,
 		flarePointSize = .005,
 		forceTexAlpha = .5,
@@ -1657,7 +1657,7 @@ App.refreshVisibleCircles = |:| do
 			--]]
 			-- [[
 			--local tfrac = tonumber(tavg - earthquakeWindowStartTime) / tonumber(earthquakeWindowEndTime - earthquakeWindowStartTime)
-			-- since this is red -> grey -> green, make sure grey is always at the current selected earthquakes time
+			-- since this is red -> yellow -> green, make sure yellow is always at the current selected earthquakes time
 			local tfrac
 			if tavg < eq.ostime then
 				tfrac = tonumber(tavg - eq.ostime) / tonumber(eq.ostime - earthquakeWindowStartTime)	-- [-1, 0]
@@ -1668,10 +1668,10 @@ App.refreshVisibleCircles = |:| do
 			end
 			-- don't both with c.color here ... or ever?
 			local signtfrac = math.sign(tfrac)
-			local powtfrac = signtfrac * math.abs(tfrac) ^ 1.5
+			local powtfrac = tfrac	-- signtfrac * math.abs(tfrac) ^ 1.5
 			local r = .5 - .5 * powtfrac
 			local g = .5 + .5 * powtfrac
-			local b = math.min(r, g)
+			local b = 0 -- math.min(r, g)
 			colorCPU:emplace_back():set(r, g, b)
 			--]]
 
