@@ -354,7 +354,7 @@ local vars = table(
 		earthquakeIndex = #earthquakes,
 
 		trackEarthquakeIndex = -1,
-	
+
 		clickMethod = clickMethod.selectQuake,
 	}
 ):setmetatable(nil)
@@ -1725,7 +1725,7 @@ App.refreshVisibleCircles = |:| do
 			axis3CPU:emplace_back():set(axis3:unpack())
 			colorCPU:emplace_back():set(0,1,1)	-- TODO pick a color that isn't used by any planets
 			--influenceCPU:emplace_back()[0] = 1
-			centerPosCPU:emplace_back():set(0,0,0,1)	
+			centerPosCPU:emplace_back():set(0,0,0,1)
 		end
 
 		axisGPU:endUpdate()
@@ -2179,6 +2179,15 @@ App.updateEarthquakeIndex = |:| do
 	if vars.recenterOn ~= recenterOnValues.none then
 		self:recenterOnQuake()
 	end
+
+
+	-- show light-distance, because each planets influence on earth is delayed by this much, so its position should be rewinded by this much to find out its true positions influence on earth
+	-- TODO have to find each planet's specific time based on its distance, predictor-corrector
+	print()
+	local eq = earthquakes[vars.earthquakeIndex]
+	for i,p in ipairs(eq.planets) do
+		print('planet', p.name, 'dist in c', eq.planets[i].pos:length() / 299792458)
+	end
 end
 
 App.refreshSmallBodies = |:|do
@@ -2337,15 +2346,15 @@ App.event = |:,e| do
 	local canHandleMouse = not ig.igGetIO()[0].WantCaptureMouse
 	local canHandleKeyboard = not ig.igGetIO()[0].WantCaptureKeyboard
 
-	if vars.clickMethod == clickMethod.selectSpatialQuery 
+	if vars.clickMethod == clickMethod.selectSpatialQuery
 	and selectSpatialAngle <= 180	-- if we've already done a down-click...
 	then
 		-- ok if we are in select quake mode then we don't want mouse drag (orbit behavior) to do stuff so ...
 		-- so only call the updates except orbit's update
 		-- App = this class
 		-- .super = subclass w/ imgui.appwithorbit's args
-		-- .super = subclass of template built by glapp.orbitbehavior 
-		-- .super = template built by glapp.orbitbehavior 
+		-- .super = subclass of template built by glapp.orbitbehavior
+		-- .super = template built by glapp.orbitbehavior
 		-- .super = ImGuiApp
 		-- .super = GLApp
 		-- .super = SDLApp
@@ -2405,11 +2414,11 @@ App.event = |:,e| do
 				elseif clickID.y == 4 then	-- great-arcs
 					self.mouseOverSmallBodyIndex = clickID.x
 				end
-			elseif vars.clickMethod == clickMethod.selectSpatialQuery 
+			elseif vars.clickMethod == clickMethod.selectSpatialQuery
 			and selectSpatialAngle <= 180	-- if we've already done a down-click...
 			then
 				self:updateMouseLatLon(e[0].motion.x, e[0].motion.y)
-			
+
 				-- convert both to xyznorm and update inner product angle between them
 				selectSpatialLatLonUp:set(latLon:unpack())
 				local downxyz = latLonToXYZ(selectSpatialLatLonDown:unpack()):normalize()
@@ -2433,16 +2442,16 @@ App.event = |:,e| do
 		elseif e[0].type == sdl.SDL_EVENT_MOUSE_BUTTON_UP then
 			if vars.clickMethod == clickMethod.selectSpatialQuery then
 				self:updateMouseLatLon(e[0].button.x, e[0].button.y)
-		
+
 				-- convert both to xyznorm and update inner product angle between them
 				selectSpatialLatLonUp:set(latLon:unpack())
 				local downxyz = latLonToXYZ(selectSpatialLatLonDown:unpack()):normalize()
 				local upxyz = latLonToXYZ(selectSpatialLatLonUp:unpack()):normalize()
 				selectSpatialAngle = math.deg(math.acos(downxyz:dot(upxyz)))
-				self:refreshVisibleCircles()	-- update current selector circle 
+				self:refreshVisibleCircles()	-- update current selector circle
 
 				-- TODO here - filter out quakes with the filter
-				
+
 				vars.clickMethod = clickMethod.selectQuake
 			end
 		end

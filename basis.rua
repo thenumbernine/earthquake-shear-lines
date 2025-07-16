@@ -92,4 +92,47 @@ M.getPlanets = |julianDay| do
 	--]]
 end
 
+--[[
+planets' gravitational and tidal influences travel at speed 'c'
+so they will take this many seconds to reach Earth:
+	sun			507.15426258286
+	mercury		330.8190124171
+	venus		525.96477227756
+	earth		0
+	moon		1.2444409878557
+	EM_Bary		0.015120686759085
+	mars		1012.0507877836
+	jupiter		3054.0160404048
+	saturn		4559.6159352366
+	uranus		10030.440841155
+	neptune		14716.089717802
+	pluto		17116.902571755
+So for these calcs I really want the planet's position this many seconds in the past.
+
+it only ever shifts by 1/10th of a day ... not going to make any difference raelly
+--]]
+M.getPlanetsDelayedInfluence = |julianDay| do
+	local planets = M.getPlanets(julianDay)
+	local delayedPlanets = Planets()
+	for i,planet in ipairs(planets) do
+		delayedPlanets[i].pos:set(planet.pos:unpack())
+		delayedPlanets[i].vel:set(planet.vel:unpack())
+	end
+	local eph = require 'solarsystem.eph'
+	assert(eph.hasInitialized())
+	-- set to zero = disabled
+	for iter=1,0 do	-- increase iterations to keep converging
+		-- TODO pos / vel residual and stop when it gets small
+		for i,planet in ipairs(delayedPlanets) do
+			local delay_in_s = (planet.pos - planets[Planets.indexes.earth].pos):length() / 299792458
+print('planet', planet.name, 'delay day', delay_in_s / M.dayInSec)
+			local delayDay = julianDay - delay_in_s / M.dayInSec
+			local posx, posy, posz, velx, vely, velz = eph[planet.name](delayDay)
+			delayedPlanets[i].pos:set(posx * 1000, posy * 1000, posz * 1000)
+			delayedPlanets[i].vel:set(velx * 1000, vely * 1000, velz * 1000)
+		end
+	end
+	return delayedPlanets
+end
+
 return M
