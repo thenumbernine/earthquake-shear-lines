@@ -2179,15 +2179,6 @@ App.updateEarthquakeIndex = |:| do
 	if vars.recenterOn ~= recenterOnValues.none then
 		self:recenterOnQuake()
 	end
-
-
-	-- show light-distance, because each planets influence on earth is delayed by this much, so its position should be rewinded by this much to find out its true positions influence on earth
-	-- TODO have to find each planet's specific time based on its distance, predictor-corrector
-	print()
-	local eq = earthquakes[vars.earthquakeIndex]
-	for i,p in ipairs(eq.planets) do
-		print('planet', p.name, 'dist in c', eq.planets[i].pos:length() / 299792458)
-	end
 end
 
 App.refreshSmallBodies = |:|do
