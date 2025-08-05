@@ -1215,7 +1215,6 @@ void main() {
 			smallBodyTypeCode = require 'smallbodies'.smallBodyTypeCode,
 			smallbodies_gravitationalParameter = smallbodies_gravitationalParameter,
 			smallbodies_julianResetDay = dofile'../solarsystem/smallbody_t_desc.lua'.julianDay,
-			julianBaseAngleInRad = math.rad(require 'basis'.julianBaseAngle),	-- TODO don't touch the base angle ...
 		}),
 	}
 	self.clprogramObj:compile()
@@ -2612,9 +2611,6 @@ App.updateGUI = |:| do
 				ig.igSameLine()
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
 			end
-
-			-- this is tied to too many cached calculations to update here ...
-			--inputFloat('julianBaseAngle', require 'basis', 'julianBaseAngle')
 
 			ig.luatableCheckbox('showDrapTex', vars, 'showDrapTex')
 			ig.luatableSliderFloat('drapTexAlpha', vars, 'drapTexAlpha', 0, 1)

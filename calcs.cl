@@ -477,16 +477,11 @@ realsb4 rotateFromSolarToEarthFrame(
 	realsb4 v,
 	real jday
 ) {
-	return rotateZ(v,
-		<?=clnumber(julianBaseAngleInRad)?>
-		+ (fmod(jday, 1.) + .5) * -2. * M_PI * (
-			// convert from sinodic day (24 hours = 360 degrees x ())
-			// ... to sidereal day
-			1. / (1. - 1. / 365.25)
-			//1
-			//(1 - 1 / 365.25)
-		)
-	);
+	// https://en.wikipedia.org/wiki/Sidereal_time#Earth_rotation_angle
+	// McCarthy "Using UTC to Determine the Earth’s Rotation Angle" - http://hanksville.org/futureofutc/2011/preprints/13_AAS_11-666_McCarthy.pdf
+	real julianUT1Date = jday - 2451545.;
+	real earthRotationAngle = 2. * M_PI * (0.7790572732640 + 1.00273781191135448 * julianUT1Date);
+	return rotateZ(v, -earthRotationAngle);
 }
 
 //also in earthquakes.rua

@@ -66,17 +66,14 @@ M.julianBaseAngle = 47	-- why do I have this weird offset as the day base angle?
 -- Lua os.time calls mktime, which converts Y m d H M S to timestamp... with your timezone baked in.
 -- where to put this ... here? charts? ... planets.rua?
 -- This is duplicated in calcs.cl for the smallbodies
+-- synodic day = normal day = 60*60*24 seconds = 86400 seconds
+-- sidereal day = day relative to fixed distant points J2000 quazars or whatever
 M.rotateFromSolarToEarthFrame = |v, jday| do
-	v = M.rotateZ(v,
-		math.rad(M.julianBaseAngle)
-		+ ((jday % 1) + .5) * -2 * math.pi * (
-			-- convert from sinodic day (24 hours = 360 degrees x ())
-			-- ... to sidereal day
-			1 / (1 - 1 / 365.25)
-			--1
-			--(1 - 1 / 365.25)
-		)
-	)
+	-- https://en.wikipedia.org/wiki/Sidereal_time#Earth_rotation_angle
+	-- McCarthy "Using UTC to Determine the Earth’s Rotation Angle" - http://hanksville.org/futureofutc/2011/preprints/13_AAS_11-666_McCarthy.pdf
+	local julianUT1Date = jday - 2451545
+	local earthRotationAngle = 2 * math.pi * (0.7790572732640 + 1.00273781191135448 * julianUT1Date)
+	v = M.rotateZ(v, -earthRotationAngle)
 	return v
 end
 
