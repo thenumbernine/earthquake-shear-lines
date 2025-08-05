@@ -2517,11 +2517,12 @@ App.updateGUI = |:| do
 
 			-- hr --
 			ig.igText('flares in window = '..(flareWindowEndIndex == 0 and 0 or (flareWindowEndIndex - flareWindowStartIndex + 1)))
-			ig.igText('flare window start time = '..flares[flareWindowStartIndex].time)
-			ig.igText('flare window end time = '..flares[flareWindowEndIndex].time)
-			ig.igText('flare window start index = '..flareWindowStartIndex)
-			ig.igText('flare window end index = '..flareWindowEndIndex)
-
+			if flareWindowEndIndex > 0 then
+				ig.igText('flare window start time = '..flares[flareWindowStartIndex].time)
+				ig.igText('flare window end time = '..flares[flareWindowEndIndex].time)
+				ig.igText('flare window start index = '..flareWindowStartIndex)
+				ig.igText('flare window end index = '..flareWindowEndIndex)
+			end
 
 			ig.igEndMenu()
 		end
@@ -2611,7 +2612,9 @@ App.updateGUI = |:| do
 				ig.igSameLine()
 				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
 			end
-			inputFloat('julianBaseAngle', require 'basis', 'julianBaseAngle')
+
+			-- this is tied to too many cached calculations to update here ...
+			--inputFloat('julianBaseAngle', require 'basis', 'julianBaseAngle')
 
 			ig.luatableCheckbox('showDrapTex', vars, 'showDrapTex')
 			ig.luatableSliderFloat('drapTexAlpha', vars, 'drapTexAlpha', 0, 1)

@@ -61,7 +61,7 @@ UTC time                    my julian day #  juliandate.org's julian-day-#  = ti
 ... difference = 0.33374869963154
 so my julian date is 8 hours ahead = my time zone, hmmmmmm is his timezone-offset? is mine?
 --]]
-M.julianBaseAngle = 97	-- why do I have this weird offset as the day base angle?
+M.julianBaseAngle = 47	-- why do I have this weird offset as the day base angle? and why do I keep updating it ...
 
 -- Lua os.time calls mktime, which converts Y m d H M S to timestamp... with your timezone baked in.
 -- where to put this ... here? charts? ... planets.rua?
