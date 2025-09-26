@@ -36,7 +36,8 @@ local latLonToXYZ = require 'charts'.latLonToXYZ
 
 local getDayCache = require 'earthquakes'.getDayCache
 local checkTime = require 'earthquakes'.checkTime
-local earthquakes = require 'earthquakes'.earthquakes
+local getEarthquakes = require 'earthquakes'.getEarthquakes
+local earthquakes = getEarthquakes()
 local checkDuration = 60*5	-- re-check every 5 mins ... disabled atm cuz it runs curl that stalls the main thread .... TODO do like DRAP query that doesnt stall the process.
 
 local flares = require 'flares'
