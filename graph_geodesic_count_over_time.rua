@@ -1,0 +1,42 @@
+#!/usr/bin/env rua
+-- run this to cycle through all quakes, count the # of goedesics (within window, subject to angle tolerance),
+-- and make a graph of the # of geodesics-with-window per quake over time (to see if its increasing or not).
+-- hmm should I do this for one fixed angle, or for all angles (histogram per quake for all its geodesics)?
+
+local dayInSec = require 'basis'.dayInSec
+local getEarthquakes = require 'earthquakes'.getEarthquakes
+local calcCircles = require 'circles'
+calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold = .1	-- degrees
+calcCircles.prevTimeWindowInDays = 3		-- how far into the past
+calcCircles.nextTimeWindowInDays = 0		-- how far into the future
+
+local earthquakes = getEarthquakes(365)
+
+-- also in App:calcQuakeWindowIndexes
+print('#all geodesics formed by 2 more quakes from -'..calcCircles.prevTimeWindowInDays
+	..' days to +'..calcCircles.nextTimeWindowInDays..' days that pass within '
+	..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold..' degrees of this quake')
+for earthquakeIndex,eq in ipairs(earthquakes) do
+	local earthquakeWindowStartTime = eq.ostime - calcCircles.prevTimeWindowInDays * dayInSec
+	local earthquakeWindowEndTime = eq.ostime + calcCircles.nextTimeWindowInDays * dayInSec
+	
+	local earthquakeWindowStartIndex = earthquakeIndex
+	for i=earthquakeIndex,1,-1 do
+		if earthquakes[i].ostime < earthquakeWindowStartTime then break end
+		earthquakeWindowStartIndex = i
+	end
+	local earthquakeWindowEndIndex = earthquakeIndex
+	for i=earthquakeIndex,#earthquakes do
+		if earthquakes[i].ostime > earthquakeWindowEndTime then break end
+		earthquakeWindowEndIndex = i
+	end
+
+	-- recalc earthquakes[earthquakeIndex].allCircles
+	calcCircles.calcCircles(
+		earthquakes,
+		earthquakeIndex,
+		earthquakeWindowStartIndex,
+		earthquakeWindowEndIndex
+	)
+	print(eq.ostime, #eq.touchingCircles, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
+end
