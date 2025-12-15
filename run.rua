@@ -22,8 +22,6 @@ local vector = require 'ffi.cpp.vector-lua'
 local CLEnv = require 'cl.obj.env'
 local clnumber = require 'cl.obj.number'
 
-local Julian = require 'solarsystem.julian'
-
 local Planets = require 'basis'.Planets
 local basisFor = require 'basis'.basisFor
 local dayInSec = require 'basis'.dayInSec
