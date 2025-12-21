@@ -1549,7 +1549,7 @@ App.refreshFBO=|:|do
 		:setColorAttachmentTex2D(self.colorFBOTex.id, 0)
 		:setColorAttachmentTex2D(self.clickIDFBOTex.id, 1)
 		:setColorAttachmentTex2D(self.latLonFBOTex.id, 2)
-		:setDrawBuffers(gl.GL_COLOR_ATTACHMENT0, gl.GL_COLOR_ATTACHMENT1, gl.GL_COLOR_ATTACHMENT2)
+		:drawBuffers(gl.GL_COLOR_ATTACHMENT0, gl.GL_COLOR_ATTACHMENT1, gl.GL_COLOR_ATTACHMENT2)
 		:unbind()
 end
 
