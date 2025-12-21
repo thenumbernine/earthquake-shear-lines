@@ -9,7 +9,7 @@ local GLProgram = require 'gl.program'
 local GLGeometry = require 'gl.geometry'
 local GLTex2D = require 'gl.tex2d'
 local GLGradientTex2D = require 'gl.gradienttex2d'
-local GLFBO = require 'gl.fbo'
+local GLFramebuffer = require 'gl.framebuffer'
 local GLGlobal = require 'gl.global'
 local glreport = require 'gl.report'
 local ig = require 'imgui'
@@ -1539,7 +1539,7 @@ App.refreshFBO=|:|do
 	self.drawFBOObj.texs[1] = self.colorFBOTex
 --self.drawFBOObj.texs[1] = self.clickIDFBOTex
 
-	self.fbo = GLFBO{
+	self.fbo = GLFramebuffer{
 		width = self.width,
 		height = self.height,
 		useDepth = true,
