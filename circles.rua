@@ -172,7 +172,13 @@ M.findCirclesClosestTo = |earthquakes, earthquakeIndex, allCircles| do
 			}
 		end
 	end
+--[[ sort by how accurate the 3 points make a geodesic
 	return touchingCircles:sort(|ta,tb| ta.angleFromArcInDeg < tb.angleFromArcInDeg)
+--]]
+-- [[ sort by their angle with the orbital plane (of the currently selected quake, i.e. earthquakes[earthquakeIndex])
+	local eq = earthquakes[earthquakeIndex]
+	return touchingCircles:sort(|ta,tb| eq.orbitAxis:dot(ta.circle.axis) < eq.orbitAxis:dot(tb.circle.axis))
+--]]
 end
 
 -- TODO don't calc *all* circles

@@ -418,8 +418,7 @@ App.calcQuakeWindowIndexes = |:|do
 		eq.circlesMadeByQuakes = {}
 		for ci,c in ipairs(eq.allCircles) do
 			for _,i in ipairs(c.indexes) do
-				eq.circlesMadeByQuakes[i] ??= table()
-				eq.circlesMadeByQuakes[i]:insert(ci)
+				(eq.circlesMadeByQuakes[i] ??:= table()):insert(ci)
 			end
 		end
 	end
@@ -2750,6 +2749,9 @@ App.updateGUI = |:| do
 						math.deg(math.acos(eq1.xyznorm:dot(eq.xyznorm))),
 						math.deg(math.acos(eq2.xyznorm:dot(eq.xyznorm))),
 					}:sort():mapi(tostring):concat', '
+					..', geodesic is at angle '
+					..math.deg(math.acos(eq.orbitAxis:dot(t.circle.axis)))
+					..' from orbital plane.'
 				)
 
 				ig.igPopID()
