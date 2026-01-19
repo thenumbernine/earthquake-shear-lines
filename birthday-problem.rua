@@ -8,15 +8,15 @@ local function calcProbsForTwoQuakesInGeodesicForSampleSize(degreeThreshold)
 	local n = math.round(360 / degreeThreshold)
 	if cache[n] then return cache[n] end
 
-	print('generating birthday problem for n='..n)
+--DEBUG:print('generating birthday problem for n='..n)
 	local probs = {[0]=0}
-	local denom = 10^10 
+	local denom = 1e+10
 	local y = denom
 	for x=1,n do
 		y *= 1 - (x-1)/n
 		local p = math.round(denom - y)
 		if p == denom then break end
-		print(' P('..x..') = '..p..'/'..denom)
+--DEBUG:print(' P('..x..') = '..p..'/'..denom)
 		probs[x] = p/denom
 	end
 	cache[n] = probs

@@ -2743,15 +2743,15 @@ App.updateGUI = |:| do
 				end
 
 				ig.igSameLine()
-				ig.igText(t.angleFromArcInDeg..'° from arc.   3 Points are at angles: '
+				ig.igText(t.angleFromArcInDeg..'° from arc.   3 pt sep angles: '
 					..table{
 						math.deg(t.circle.centerAngle * 2),
 						math.deg(math.acos(eq1.xyznorm:dot(eq.xyznorm))),
 						math.deg(math.acos(eq2.xyznorm:dot(eq.xyznorm))),
 					}:sort():mapi(tostring):concat', '
-					..', geodesic is at angle '
-					..math.deg(math.acos(eq.orbitAxis:dot(t.circle.axis)))
-					..' from orbital plane.'
+					..', orb plane: '
+					..math.deg(math.acos(math.abs(eq.orbitAxis:dot(t.circle.axis))))
+					..', dt '..( .5 * (eq1.julianDay + eq2.julianDay) - eq.julianDay )
 				)
 
 				ig.igPopID()

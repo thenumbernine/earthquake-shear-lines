@@ -146,7 +146,7 @@ M.circleFitsCriteria = |allCircles, circleIndex, earthquakes, earthquakeIndex| d
 	local angleFromArc = angleFromAxis - .5 * math.pi
 	local angleFromArcInDeg = math.abs(math.deg(angleFromArc))
 	if angleFromArcInDeg >= M.quakeAlignWithPreviousGeodesicAngleThreshold then return end
-	
+
 	-- if a previous great-arc was already associated with this point and it is close enough to the current great-arc then skip the current one (uniques only)
 	if (M.filterDuplicateTouchingArcsAngleThreshold or 0) > 0 then
 		for circleIndex2=1,circleIndex-1 do
@@ -177,7 +177,10 @@ M.findCirclesClosestTo = |earthquakes, earthquakeIndex, allCircles| do
 --]]
 -- [[ sort by their angle with the orbital plane (of the currently selected quake, i.e. earthquakes[earthquakeIndex])
 	local eq = earthquakes[earthquakeIndex]
-	return touchingCircles:sort(|ta,tb| eq.orbitAxis:dot(ta.circle.axis) < eq.orbitAxis:dot(tb.circle.axis))
+	return touchingCircles:sort(|ta,tb|
+		math.abs(eq.orbitAxis:dot(ta.circle.axis))
+		< math.abs(eq.orbitAxis:dot(tb.circle.axis))
+	)
 --]]
 end
 
