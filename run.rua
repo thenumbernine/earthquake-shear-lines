@@ -1838,7 +1838,7 @@ App.update = |:| do
 	self.oddsTrue = self.oddsTrue or 0
 	self.oddsFalse = self.oddsFalse or 0
 	-- TODO this is the odds of 2 (or more) matching.  we should calc the odds of the number of matches that we actually got.
-	local probsForEqSetSize = require 'birthday-problem'[calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold]
+	local probsForEqSetSize = require 'birthday-problem'(calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold)
 	if probsForEqSetSize then
 		if not eq.probabilityOfFindingAnyGeodesic then
 			local numQuakesInWindow = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
