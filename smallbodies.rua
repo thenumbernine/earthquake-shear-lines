@@ -61,7 +61,14 @@ typedef struct SmallBody {
 ffi.cdef(smallBodyTypeCode)
 assert.eq(ffi.sizeof'SmallBody', 304)
 
-local smallBodyStr = assert(path'../solarsystem/smallbodies.raw':read())
+local smallbodiesPath = path'../solarsystem/smallbodies.raw'
+
+if not smallbodiesPath:exists() then
+	print("not reading smallbodies: couldn't find "..smallbodiesPath)
+	return {}
+end
+
+local smallBodyStr = assert(smallbodiesPath:read())
 assert.eq(#smallBodyStr % ffi.sizeof'SmallBody', 0)
 local numSmallBodies = #smallBodyStr / ffi.sizeof'SmallBody'
 print('numSmallBodies', numSmallBodies)
@@ -69,8 +76,10 @@ print('numSmallBodies', numSmallBodies)
 local smallbodies = vector'SmallBody'
 smallbodies:resize(numSmallBodies)
 ffi.copy(smallbodies.v, smallBodyStr, #smallBodyStr)
+local julianDay = dofile'../solarsystem/smallbody_t_desc.lua'.julianDay
 
 return {
-	smallBodyTypeCode = smallBodyTypeCode,
+	smallBodyTypeCode = smallBodyTypeCode,	-- used by CL
 	smallbodies = smallbodies,
+	julianDay = julianDay,	-- the day of the snapshot
 }

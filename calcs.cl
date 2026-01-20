@@ -440,6 +440,8 @@ kernel void rescale(
 <? end ?>
 }
 
+<? if hasSmallBodies then ?>
+
 // I woulda thought OpenCL would have this already
 typedef char int8_t;
 typedef unsigned char uint8_t;
@@ -630,3 +632,4 @@ kernel void updateSmallBodies(
 	//  or is the initial eccentricAnomaly always zero?
 }
 
+<? end -- hasSmallBodies ?>

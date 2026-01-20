@@ -1209,10 +1209,11 @@ void main() {
 			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
 
 			-- for small body calcs:
-			numSmallBodies = #smallbodies,
-			smallBodyTypeCode = require 'smallbodies'.smallBodyTypeCode,
-			smallbodies_gravitationalParameter = smallbodies_gravitationalParameter,
-			smallbodies_julianResetDay = dofile'../solarsystem/smallbody_t_desc.lua'.julianDay,
+			hasSmallBodies = not not smallbodies,
+			numSmallBodies = smallbodies and #smallbodies,
+			smallBodyTypeCode = smallbodies and require 'smallbodies'.smallBodyTypeCode,
+			smallbodies_gravitationalParameter = smallbodies and smallbodies_gravitationalParameter,
+			smallbodies_julianResetDay = smallbodies and require 'smallbodies'.julianDay,
 		}),
 	}
 	self.clprogramObj:compile()
@@ -1360,33 +1361,34 @@ void main() {
 	-- I guess I don't have to, but then I'd have to redo the SmallBody struct,
 	-- which I gotta do anyways ...
 
-	self.smallbodiesCLBuf = self.env:buffer{
-		name = 'bodies',
-		type = 'SmallBody',
-		count = #smallbodies,
-		data = smallbodies.v,
-	}
+	if smallbodies then
+		self.smallbodiesCLBuf = self.env:buffer{
+			name = 'bodies',
+			type = 'SmallBody',
+			count = #smallbodies,
+			data = smallbodies.v,
+		}
 
-	self.updateSmallBodiesKernel = self.clprogramObj:kernel{
-		name = 'updateSmallBodies',
-		domain = self.env:domain{dim=1, size={#smallbodies}},
-	}
-	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
+		self.updateSmallBodiesKernel = self.clprogramObj:kernel{
+			name = 'updateSmallBodies',
+			domain = self.env:domain{dim=1, size={#smallbodies}},
+		}
+		self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
 
-	self.smallbodiesGLBuf = GLArrayBuffer{
-		size = smallbodies:getNumBytes(),
-		data = smallbodies.v,
-		usage = gl.GL_DYNAMIC_DRAW,
-	}:unbind()
+		self.smallbodiesGLBuf = GLArrayBuffer{
+			size = smallbodies:getNumBytes(),
+			data = smallbodies.v,
+			usage = gl.GL_DYNAMIC_DRAW,
+		}:unbind()
 assert(glreport'here')
 
-	self.drawSmallBodiesSceneObj = GLSceneObject{
-		-- same as pairCrossPointShader but with a dvec for double smallbody inputs
-		-- honestly maybe I should use dvec's in all of them?
-		program = {
-			version = 'latest',
-			precision = 'best',
-			vertexCode = template([[
+		self.drawSmallBodiesSceneObj = GLSceneObject{
+			-- same as pairCrossPointShader but with a dvec for double smallbody inputs
+			-- honestly maybe I should use dvec's in all of them?
+			program = {
+				version = 'latest',
+				precision = 'best',
+				vertexCode = template([[
 layout(location=0) in vec2 vertex;	// billboard texcoord in [-1,1]^2
 in dvec3 bodyPos;
 
@@ -1441,11 +1443,11 @@ void main() {
 
 	gl_Position = mvProjMat * vec4(pos, 1.);
 }
-]],			{
-				chartCode = chartCode,
-				chartCNames = chartCNames,
-			}),
-			fragmentCode = [[
+]],				{
+					chartCode = chartCode,
+					chartCNames = chartCNames,
+				}),
+				fragmentCode = [[
 in vec2 texcoordv;
 in flat uint idv;
 
@@ -1465,26 +1467,27 @@ void main() {
 	fragID = uvec4(idv, idhi, 0, 0);
 }
 ]],
-			uniforms = {
-				idbase = 0,
-				idhi = 4,	-- 4 == small bodies
+				uniforms = {
+					idbase = 0,
+					idhi = 4,	-- 4 == small bodies
+				},
 			},
-		},
-		geometry = {
-			mode = gl.GL_TRIANGLE_STRIP,
-		},
-		vertexes = billboardPointVtxBuf,
-		attrs = {
-			bodyPos = {
-				divisor = 1,
-				buffer = self.smallbodiesGLBuf,
-				dim = 3,
-				type = ffi.typeof'realsb' == ffi.typeof'double' and gl.GL_DOUBLE or gl.GL_FLOAT,
-				stride = ffi.sizeof'SmallBody',
-				offset = ffi.offsetof('SmallBody', 'pos'),
+			geometry = {
+				mode = gl.GL_TRIANGLE_STRIP,
 			},
-		},
-	}
+			vertexes = billboardPointVtxBuf,
+			attrs = {
+				bodyPos = {
+					divisor = 1,
+					buffer = self.smallbodiesGLBuf,
+					dim = 3,
+					type = ffi.typeof'realsb' == ffi.typeof'double' and gl.GL_DOUBLE or gl.GL_FLOAT,
+					stride = ffi.sizeof'SmallBody',
+					offset = ffi.offsetof('SmallBody', 'pos'),
+				},
+			},
+		}
+	end
 
 
 	self.trackEarthquakeIndexes = table()
@@ -2179,6 +2182,7 @@ App.updateEarthquakeIndex = |:| do
 end
 
 App.refreshSmallBodies = |:|do
+	if not smallbodies then return end
 	if not vars.drawSmallBodies then return end
 	local eq = earthquakes[vars.earthquakeIndex]
 	self.updateSmallBodiesKernel.obj:setArg(0, self.smallbodiesCLBuf)
@@ -2869,7 +2873,8 @@ App.updateGUI = |:| do
 			ig.igEndTooltip()
 		end
 	elseif self.mouseOverSmallBodyIndex then
-		if self.mouseOverSmallBodyIndex >= 0
+		if smallbodies
+		and self.mouseOverSmallBodyIndex >= 0
 		and self.mouseOverSmallBodyIndex < #smallbodies
 		then
 			local smallbody = smallbodies.v + self.mouseOverSmallBodyIndex
