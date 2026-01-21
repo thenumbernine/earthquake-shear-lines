@@ -17,7 +17,8 @@ local earthquakes = getEarthquakes(365)
 -- also in App:calcQuakeWindowIndexes
 print('#all geodesics formed by 2 more quakes from -'..calcCircles.prevTimeWindowInDays
 	..' days to +'..calcCircles.nextTimeWindowInDays..' days that pass within '
-	..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold..' degrees of this quake')
+	..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold..' degrees of this quake'
+)
 for earthquakeIndex,eq in ipairs(earthquakes) do
 	local earthquakeWindowStartTime = eq.ostime - calcCircles.prevTimeWindowInDays * dayInSec
 	local earthquakeWindowEndTime = eq.ostime + calcCircles.nextTimeWindowInDays * dayInSec
@@ -45,6 +46,26 @@ for earthquakeIndex,eq in ipairs(earthquakes) do
 end
 --]]
 -- [[
+local outpath = path(
+	'geodesic_count_over_time'
+	..'_days='..calcCircles.prevTimeWindowInDays
+	..'_angle='..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold
+	..'.txt'
+)
+local outfile = assert(outpath:open'w')
+local function fprint(...)
+	print(...)
+	for i=1,select('#', ...) do
+		if i > 1 then outfile:write'\t' end
+		outfile:write((select(i, ...)))
+	end
+	outfile:write'\n'
+	outfile:flush()
+end
+fprint('#all geodesics formed by 2 more quakes from -'..calcCircles.prevTimeWindowInDays
+	..' days to +'..calcCircles.nextTimeWindowInDays..' days that pass within '
+	..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold..' degrees of this quake'
+)
 local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(calcCircles.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
 for earthquakeIndex,eq in ipairs(earthquakes) do
 	local v = eq.xyznorm
@@ -125,9 +146,10 @@ for earthquakeIndex,eq in ipairs(earthquakes) do
 ::continue_1::
 	end
 
-	print(eq.ostime, touchingCircleCount, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
-	collectgarbage()
+	fprint(tonumber(eq.ostime), touchingCircleCount, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
+	--collectgarbage()
 end
+outfile:close()
 --]]
 
 --[[ plot with gnuplot:
