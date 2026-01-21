@@ -6,9 +6,9 @@
 local dayInSec = require 'basis'.dayInSec
 local getEarthquakes = require 'earthquakes'.getEarthquakes
 local calcCircles = require 'circles'
-calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold = .1	-- degrees
-calcCircles.prevTimeWindowInDays = 3		-- how far into the past
-calcCircles.nextTimeWindowInDays = 0		-- how far into the future
+calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold = .01	-- degrees
+calcCircles.prevTimeWindowInDays = 7		-- how far into the past
+calcCircles.nextTimeWindowInDays = 7		-- how far into the future
 
 -- this takes a few seconds but is just run once so meh
 local earthquakes = getEarthquakes(365)
@@ -48,7 +48,7 @@ end
 -- [[
 local outpath = path(
 	'geodesic_count_over_time'
-	..'_days='..calcCircles.prevTimeWindowInDays
+	..'_days='..calcCircles.prevTimeWindowInDays..','..calcCircles.nextTimeWindowInDays
 	..'_angle='..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold
 	..'.txt'
 )
@@ -152,9 +152,23 @@ end
 outfile:close()
 --]]
 
---[[ plot with gnuplot:
-set style data lines
-set xdata time
-set timefmt "%s"
-plot 'tmp' using 1:2 notitle
+-- [[ plot with gnuplot:
+local graphoutpath = outpath:setext'png'
+local gnuplot = require 'gnuplot'
+gnuplot{
+	terminal = 'png size 1024,768',
+	output = graphoutpath.path, 
+	style = 'data lines',
+	xdata = 'time',
+	timefmt = '%s',
+	{datafile=outpath.path, using='1:2', notitle=true},
+}
+local smoothSigma = 86400
+os.exec(table{
+	'../smooth_graph/smooth_graph.lua',
+	 graphoutpath:escape(),			-- infn
+	smoothSigma,					-- sigmafn
+	'"'..graphoutpath:getext()..'_smooth='..smoothSigma ..'.png"',	-- outfn
+	"xdata=time 'timefmt=%s'",
+}:mapi(tostring):concat' ')
 --]]

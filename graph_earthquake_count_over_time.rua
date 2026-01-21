@@ -1,0 +1,58 @@
+#!/usr/bin/env rua
+-- this produces a baseline for graph_geodesic_count_over_time.rua
+
+local getEarthquakes = require 'earthquakes'.getEarthquakes
+local prevTimeWindowInDays = 3		-- how far into the past
+local nextTimeWindowInDays = 0		-- how far into the future
+
+local earthquakes = getEarthquakes(365)
+
+local outpath = path(
+	'earthquake_count_over_time_days='..calcCircles.prevTimeWindowInDays..','..calcCircles.nextTimeWindowInDays
+	..'.txt'
+)
+local outfile = assert(outpath:open'w')
+
+local function fprint(...)
+	print(...)
+	for i=1,select('#', ...) do
+		if i > 1 then outfile:write'\t' end
+		outfile:write((select(i, ...)))
+	end
+	outfile:write'\n'
+	outfile:flush()
+end
+
+for earthquakeIndex,eq in ipairs(earthquakes) do
+	local v = eq.xyznorm
+
+	local earthquakeWindowStartTime = eq.ostime - calcCircles.prevTimeWindowInDays * dayInSec
+	local earthquakeWindowEndTime = eq.ostime + calcCircles.nextTimeWindowInDays * dayInSec
+
+	local earthquakeWindowStartIndex = earthquakeIndex
+	for i=earthquakeIndex,1,-1 do
+		if earthquakes[i].ostime < earthquakeWindowStartTime then break end
+		earthquakeWindowStartIndex = i
+	end
+	local earthquakeWindowEndIndex = earthquakeIndex
+	for i=earthquakeIndex,#earthquakes do
+		if earthquakes[i].ostime > earthquakeWindowEndTime then break end
+		earthquakeWindowEndIndex = i
+	end
+
+	local earthquakeWindowSize = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
+
+	fprint(tonumber(eq.ostime), touchingCircleCount, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
+end
+outfile:close()
+
+local graphoutpath = outpath:setext'png'
+local gnuplot = require 'gnuplot'
+gnuplot{
+	terminal = 'png size 1024,768',
+	output = graphoutpath.path, 
+	style = 'data lines',
+	xdata = 'time',
+	timefmt = '%s',
+	{datafile=outpath.path, using='1:2', notitle=true},
+}
