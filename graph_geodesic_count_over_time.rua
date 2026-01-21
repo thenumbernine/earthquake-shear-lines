@@ -10,8 +10,10 @@ calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold = .1	-- degrees
 calcCircles.prevTimeWindowInDays = 3		-- how far into the past
 calcCircles.nextTimeWindowInDays = 0		-- how far into the future
 
+-- this takes a few seconds but is just run once so meh
 local earthquakes = getEarthquakes(365)
 
+--[[ too slow, cuz it does too much aux stuff for the visualizer
 -- also in App:calcQuakeWindowIndexes
 print('#all geodesics formed by 2 more quakes from -'..calcCircles.prevTimeWindowInDays
 	..' days to +'..calcCircles.nextTimeWindowInDays..' days that pass within '
@@ -19,7 +21,7 @@ print('#all geodesics formed by 2 more quakes from -'..calcCircles.prevTimeWindo
 for earthquakeIndex,eq in ipairs(earthquakes) do
 	local earthquakeWindowStartTime = eq.ostime - calcCircles.prevTimeWindowInDays * dayInSec
 	local earthquakeWindowEndTime = eq.ostime + calcCircles.nextTimeWindowInDays * dayInSec
-	
+
 	local earthquakeWindowStartIndex = earthquakeIndex
 	for i=earthquakeIndex,1,-1 do
 		if earthquakes[i].ostime < earthquakeWindowStartTime then break end
@@ -39,4 +41,98 @@ for earthquakeIndex,eq in ipairs(earthquakes) do
 		earthquakeWindowEndIndex
 	)
 	print(eq.ostime, #eq.touchingCircles, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
+	collectgarbage()
 end
+--]]
+-- [[
+local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(calcCircles.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
+for earthquakeIndex,eq in ipairs(earthquakes) do
+	local v = eq.xyznorm
+
+	local earthquakeWindowStartTime = eq.ostime - calcCircles.prevTimeWindowInDays * dayInSec
+	local earthquakeWindowEndTime = eq.ostime + calcCircles.nextTimeWindowInDays * dayInSec
+
+	local earthquakeWindowStartIndex = earthquakeIndex
+	for i=earthquakeIndex,1,-1 do
+		if earthquakes[i].ostime < earthquakeWindowStartTime then break end
+		earthquakeWindowStartIndex = i
+	end
+	local earthquakeWindowEndIndex = earthquakeIndex
+	for i=earthquakeIndex,#earthquakes do
+		if earthquakes[i].ostime > earthquakeWindowEndTime then break end
+		earthquakeWindowEndIndex = i
+	end
+
+	--print(earthquakeIndex, earthquakeWindowStartIndex, earthquakeWindowEndIndex)
+
+	local touchingCircleCount = 0
+
+	-- now find all pairs in the window that, with eq, make a great-arc, within calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold
+	for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex-1 do
+		if i == earthquakeIndex then
+			goto continue_1
+		end
+
+		local eq2 = earthquakes[i]
+		local v2 = eq2.xyznorm
+
+		local cosAngle12 = v:dot(v2)
+		if cosAngle12 > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
+			goto continue_1
+		end
+
+		for j=i+1,earthquakeWindowEndIndex do
+			if j == earthquakeIndex then
+				goto continue_2
+			end
+
+			local eq3 = earthquakes[j]
+			local v3 = eq3.xyznorm
+
+			local cosAngle13 = v:dot(v3)
+			if cosAngle13 > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
+				goto continue_2
+			end
+
+			-- TODO why use a separate angle filter between 1&2, 1&3 and between 2&3 ?
+			-- so instead of a 10 degree separation between 2 & 3 and a 5 degree separation between 1 & 2 and 1 & 3,
+			--  I'll just use 5 degrees for everyone
+			local cosAngle23 = v2:dot(v3)
+			if cosAngle23 > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
+				goto continue_2
+			end
+
+			-- just going to assume filterDuplicatePointsAngleThreshold==0
+
+			local torque = v2:cross(v3)	-- TODO times pair of earthquake magnitudes or something?
+			local axisLen = torque:length()
+			local axis = torque * (1 / (math.max(axisLen, 1e-15)))
+
+			-- cos angle from axis = sine angle from rotation plane
+			local cosAngleFromAxis = axis:dot(v)
+			local angleFromAxis = math.acos(cosAngleFromAxis)
+			local angleFromArc = angleFromAxis - .5 * math.pi
+			local angleFromArcInDeg = math.abs(math.deg(angleFromArc))
+			if angleFromArcInDeg >= calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold then
+				goto continue_2
+			end
+
+			-- NOTICE I'm skipping uniques-only because I don't want to O(n^2) cycle through pairs
+
+			touchingCircleCount += 1
+::continue_2::
+		end
+::continue_1::
+	end
+
+	print(eq.ostime, touchingCircleCount, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
+	collectgarbage()
+end
+--]]
+
+--[[ plot with gnuplot:
+set style data lines
+set xdata time
+set timefmt "%s"
+plot 'tmp' using 1:2 notitle
+--]]
