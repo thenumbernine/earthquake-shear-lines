@@ -1,5 +1,6 @@
 #!/usr/bin/env rua
 -- this produces a baseline for graph_geodesic_count_over_time.rua
+-- and I just inserted it as the 3rd col of the geodesic-count graphs so ...
 
 local dayInSec = require 'basis'.dayInSec
 local getEarthquakes = require 'earthquakes'.getEarthquakes

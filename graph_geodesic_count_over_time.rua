@@ -146,7 +146,9 @@ for earthquakeIndex,eq in ipairs(earthquakes) do
 ::continue_1::
 	end
 
-	fprint(tonumber(eq.ostime), touchingCircleCount, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
+	local earthquakeWindowSize = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
+
+	fprint(tonumber(eq.ostime), touchingCircleCount, earthquakeWindowSize, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
 	--collectgarbage()
 end
 outfile:close()
