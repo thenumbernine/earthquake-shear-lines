@@ -1,6 +1,7 @@
 #!/usr/bin/env rua
 -- this produces a baseline for graph_geodesic_count_over_time.rua
 
+local dayInSec = require 'basis'.dayInSec
 local getEarthquakes = require 'earthquakes'.getEarthquakes
 local prevTimeWindowInDays = 3		-- how far into the past
 local nextTimeWindowInDays = 0		-- how far into the future
@@ -8,7 +9,7 @@ local nextTimeWindowInDays = 0		-- how far into the future
 local earthquakes = getEarthquakes(365)
 
 local outpath = path(
-	'earthquake_count_over_time_days='..calcCircles.prevTimeWindowInDays..','..calcCircles.nextTimeWindowInDays
+	'earthquake_count_over_time_days='..prevTimeWindowInDays..','..nextTimeWindowInDays
 	..'.txt'
 )
 local outfile = assert(outpath:open'w')
@@ -26,8 +27,8 @@ end
 for earthquakeIndex,eq in ipairs(earthquakes) do
 	local v = eq.xyznorm
 
-	local earthquakeWindowStartTime = eq.ostime - calcCircles.prevTimeWindowInDays * dayInSec
-	local earthquakeWindowEndTime = eq.ostime + calcCircles.nextTimeWindowInDays * dayInSec
+	local earthquakeWindowStartTime = eq.ostime - prevTimeWindowInDays * dayInSec
+	local earthquakeWindowEndTime = eq.ostime + nextTimeWindowInDays * dayInSec
 
 	local earthquakeWindowStartIndex = earthquakeIndex
 	for i=earthquakeIndex,1,-1 do
@@ -42,7 +43,7 @@ for earthquakeIndex,eq in ipairs(earthquakes) do
 
 	local earthquakeWindowSize = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
 
-	fprint(tonumber(eq.ostime), touchingCircleCount, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
+	fprint(tonumber(eq.ostime), earthquakeWindowSize, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
 end
 outfile:close()
 
