@@ -6,7 +6,7 @@
 local dayInSec = require 'basis'.dayInSec
 local getEarthquakes = require 'earthquakes'.getEarthquakes
 local calcCircles = require 'circles'
-calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold = .01	-- degrees
+calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold = .001	-- degrees
 calcCircles.prevTimeWindowInDays = 3		-- how far into the past
 calcCircles.nextTimeWindowInDays = 0		-- how far into the future
 
@@ -162,8 +162,8 @@ gnuplot{
 	output = graphoutpath.path, 
 	style = 'data lines',
 	xrange = {
-		earthquakes:begin().ostime,
-		earthquakes:rbegin().ostime,
+		earthquakes[1].ostime,
+		earthquakes:last().ostime,
 	},
 	xdata = 'time',
 	timefmt = '%s',
