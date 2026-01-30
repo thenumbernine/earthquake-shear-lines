@@ -13,6 +13,7 @@ local M = {}
 --M.greatArcAngleMin, M.greatArcAngleMax = 10, 90
 --M.greatArcAngleMin, M.greatArcAngleMax = 0, 180
 M.greatArcAngleMin, M.greatArcAngleMax = 10, 170
+--M.greatArcAngleMin, M.greatArcAngleMax = 5, 175	-- +-5 to match quakeMinAngleDistFromQuakesThatFormedTheGeodesic
 
 -- when searching for great-arc circles to create.
 -- ignore points within this many degrees of previously-considered points
