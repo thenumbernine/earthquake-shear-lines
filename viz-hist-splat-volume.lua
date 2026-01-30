@@ -270,7 +270,7 @@ void main() {
 	self.volumeObj.geometry.count = #self.volumeObj.vertexes.vec
 --]]
 
-	local volumeVtxGPU = self.vtxGPUsPerSide[3]
+	local volumeVtxGPU = self.vtxGPUsPerSide[1]
 	self.volumeObj = GLSceneObject{
 		program = {
 			version = 'latest',
@@ -328,7 +328,8 @@ void main() {
 	}
 --]=]
 
-
+	gl.glEnable(gl.GL_DEPTH_TEST)
+	gl.glDepthFunc(gl.GL_LEQUAL)
 	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 end
 
@@ -349,38 +350,75 @@ function App:update()
 		self.lineObj:draw()
 	end
 
-	if self.volumeObj then
-		gl.glDisable(gl.GL_DEPTH_TEST)
+	local volumeObj = self.volumeObj
+	if volumeObj then
+		local fwd = self.view.angle:zAxis()
+		local absfwd = fwd:map(math.abs)
+		local maxdir = select(2, table.sup{absfwd:unpack()})-1
+		local vtxGPUIndex = maxdir + (fwd.s[maxdir] > 0 and 3 or 0)
+		local vtxGPU = self.vtxGPUsPerSide[1+vtxGPUIndex]
+		local lastVtxGPU = volumeObj.vertexes
+		if vtxGPU ~= lastVtxGPU then
+			volumeObj.vertexes = vtxGPU
+			volumeObj.attrs.vertex.buffer = vtxGPU
+			volumeObj.geometry.vertexes = vtxGPU
+			volumeObj.geometry.count = #vtxGPU.vec
+			
+			-- weird interchange between GLSceneObject's .attrs (keyed by name, contains vao's ctor args)
+			--  and GLVertexArray's .attrs (keyed by index)
+			select(2, volumeObj.vao.attrs:find(nil, function(attr)
+				return attr.name == 'vertex'
+			end)).buffer = vtxGPU 
+			volumeObj.vao:setAttrs()
+		end
+
+		gl.glDepthMask(gl.GL_FALSE)
 		gl.glEnable(gl.GL_BLEND)
-		self.volumeObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-		self.volumeObj.uniforms.logDensityRange = logDensityRange.s
-		self.volumeObj.uniforms.logDensityAlphaRange = logDensityAlphaRange.s
-		self.volumeObj.uniforms.volumeMin = volumeRange.min.s
-		self.volumeObj.uniforms.volumeMax = volumeRange.max.s
-		self.volumeObj:draw()
+		volumeObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		volumeObj.uniforms.logDensityRange = logDensityRange.s
+		volumeObj.uniforms.logDensityAlphaRange = logDensityAlphaRange.s
+		volumeObj.uniforms.volumeMin = volumeRange.min.s
+		volumeObj.uniforms.volumeMax = volumeRange.max.s
+		volumeObj:draw()
 		gl.glDisable(gl.GL_BLEND)
-		gl.glEnable(gl.GL_DEPTH_TEST)
+		gl.glDepthMask(gl.GL_TRUE)
 	end
 
 	App.super.update(self)
 end
 
 function App:updateGUI()
-	ig.igInputFloat('logDensityMin', logDensityRange.s + 0)
-	ig.igInputFloat('logDensityMax', logDensityRange.s + 1)
+	if ig.igBeginMainMenuBar() then
+		if ig.igBeginMenu'menu' then
 
-	-- logDensity is normalized to this range [.x,.y], and then clamped to (0,1), and then scaled by .z
-	ig.igInputFloat('logDensityAlphaMin', logDensityAlphaRange.s + 0)
-	ig.igInputFloat('logDensityAlphaMax', logDensityAlphaRange.s + 1)
-	ig.igInputFloat('logDensityAlphaClampScale', logDensityAlphaRange.s + 2)
-	
-	ig.igInputFloat('volumeMinX', volumeRange.min.s + 0)
-	ig.igInputFloat('volumeMinY', volumeRange.min.s + 1)
-	ig.igInputFloat('volumeMinZ', volumeRange.min.s + 2)
-	
-	ig.igInputFloat('volumeMaxX', volumeRange.max.s + 0)
-	ig.igInputFloat('volumeMaxY', volumeRange.max.s + 1)
-	ig.igInputFloat('volumeMaxZ', volumeRange.max.s + 2)
+			ig.luatableCheckbox('ortho', self.view, 'ortho')
+			if ig.igButton'reset view' then
+				self.view.ortho = true
+				self.view.orthoSize = self.viewOrthoSize
+				self.view.angle:set(0,0,0,1)
+				self.view.orbit:set(0,0,0)
+				self.view.pos:set(0,0,self.viewDist)
+			end
+
+			ig.igInputFloat('logDensityMin', logDensityRange.s + 0)
+			ig.igInputFloat('logDensityMax', logDensityRange.s + 1)
+
+			-- logDensity is normalized to this range [.x,.y], and then clamped to (0,1), and then scaled by .z
+			ig.igInputFloat('logDensityAlphaMin', logDensityAlphaRange.s + 0)
+			ig.igInputFloat('logDensityAlphaMax', logDensityAlphaRange.s + 1)
+			ig.igInputFloat('logDensityAlphaClampScale', logDensityAlphaRange.s + 2)
+			
+			ig.igInputFloat('volumeMinX', volumeRange.min.s + 0)
+			ig.igInputFloat('volumeMinY', volumeRange.min.s + 1)
+			ig.igInputFloat('volumeMinZ', volumeRange.min.s + 2)
+			
+			ig.igInputFloat('volumeMaxX', volumeRange.max.s + 0)
+			ig.igInputFloat('volumeMaxY', volumeRange.max.s + 1)
+			ig.igInputFloat('volumeMaxZ', volumeRange.max.s + 2)
+			ig.igEndMenu()
+		end
+		ig.igEndMainMenuBar()
+	end
 end
 
 return App():run()
