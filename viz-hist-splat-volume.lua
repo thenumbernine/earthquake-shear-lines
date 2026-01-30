@@ -21,7 +21,7 @@ print('ostime', t)
 print('gmtime', tolua(tt))
 	local Julian = require 'solarsystem.julian'
 	local julianDay = Julian.fromCalendar(tt)
-print('julianday', julianDay)	
+print('julianday', julianDay)
 timer('building cache', function()
 	local lonRes = 360
 	local latRes = 180
@@ -35,7 +35,7 @@ timer('building cache', function()
 
 	local densitySize = vec3i(lonRes, latRes, timeRes)
 	local densityData = ffi.new('float[?]', densitySize:volume())
-_G.densityData = densityData 
+_G.densityData = densityData
 	for i=#earthquakes,1,-1 do
 		local eq = earthquakes[i]
 
@@ -209,7 +209,7 @@ void main() {
 	self.vtxGPUsPerSide = range(0,5):mapi(function(side)
 		local axis = side % 3
 		local pm = side >= 3
-		
+
 		local k = axis
 		local k2 = (axis + 1) % 3
 		local k3 = (axis + 2) % 3
@@ -219,9 +219,7 @@ void main() {
 			v.s[k] = z
 		end
 
-		-- regenerate voxel rendering geometry data as per our slice resolution
-		-- TODO one per 6 sides
-		local sliceRes = 360
+		local sliceRes = densitySize.s[axis]
 		local vtxGPU = GLArrayBuffer{
 			dim = 3,
 			useVec = true,
@@ -364,12 +362,12 @@ function App:update()
 			volumeObj.attrs.vertex.buffer = vtxGPU
 			volumeObj.geometry.vertexes = vtxGPU
 			volumeObj.geometry.count = #vtxGPU.vec
-			
+
 			-- weird interchange between GLSceneObject's .attrs (keyed by name, contains vao's ctor args)
 			--  and GLVertexArray's .attrs (keyed by index)
 			select(2, volumeObj.vao.attrs:find(nil, function(attr)
 				return attr.name == 'vertex'
-			end)).buffer = vtxGPU 
+			end)).buffer = vtxGPU
 			volumeObj.vao:setAttrs()
 		end
 
@@ -408,11 +406,11 @@ function App:updateGUI()
 			ig.igInputFloat('logDensityAlphaMin', logDensityAlphaRange.s + 0)
 			ig.igInputFloat('logDensityAlphaMax', logDensityAlphaRange.s + 1)
 			ig.igInputFloat('logDensityAlphaClampScale', logDensityAlphaRange.s + 2)
-			
+
 			ig.igInputFloat('volumeMinX', volumeRange.min.s + 0)
 			ig.igInputFloat('volumeMinY', volumeRange.min.s + 1)
 			ig.igInputFloat('volumeMinZ', volumeRange.min.s + 2)
-			
+
 			ig.igInputFloat('volumeMaxX', volumeRange.max.s + 0)
 			ig.igInputFloat('volumeMaxY', volumeRange.max.s + 1)
 			ig.igInputFloat('volumeMaxZ', volumeRange.max.s + 2)
