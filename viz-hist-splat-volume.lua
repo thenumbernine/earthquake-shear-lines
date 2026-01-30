@@ -5,7 +5,7 @@ splat all quakes onto a volumetric binning of lat x lon x time
 local ffi = require 'ffi'
 require 'ext'
 require 'vec-ffi'
-require 'gl.env'()
+require 'gl.env'(nil, cmdline.gl)
 local vector = require 'ffi.cpp.vector-lua'
 local ig = require 'imgui'
 
@@ -104,7 +104,7 @@ function App:initGL()
 		generateMipmap = true,
 		wrap = {
 			s = gl.GL_REPEAT,
-			t = gl.GL_CLAMP_TO_BORDER,
+			t = gl.GL_CLAMP_TO_EDGE,
 		},
 	}:unbind()
 
@@ -291,6 +291,7 @@ void main() {
 }
 ]],
 			fragmentCode = [[
+precision highp sampler3D;
 layout(location=0) in vec3 tc;
 layout(location=0) out vec4 fragColor;
 
