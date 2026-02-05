@@ -1,12 +1,32 @@
 #!/usr/bin/env luajit
 --[[
 splat all quakes onto a volumetric binning of lat x lon x time
+
+TODO
+- right now it is 360 bins of days per year ...
+- ... instead do some plot like bins of hours per day ... months per year ... minutes per day ... minutes per month???
+- ... plot the geodesic great-arc axis lat/lon instead of just the earthquake lat/lon
+- ... FFT find frequencies
+- ... fix the raytracing to use ds^2 = dx^2+dy^2+dz^2 based on camera orientation
 --]]
 local ffi = require 'ffi'
-require 'ext'
-require 'vec-ffi'
-require 'gl.env'(nil, cmdline.gl)
+local path = require 'ext.path'
+local table = require 'ext.table'
+local range = require 'ext.range'
+local assert = require 'ext.assert'
+local cmdline = require 'ext.cmdline'(...)
+local vec2f = require 'vec-ffi.vec2f'
+local vec3i = require 'vec-ffi.vec3i'
+local vec3f = require 'vec-ffi.vec3f'
+local box3f = require 'vec-ffi.box3f'
 local vector = require 'ffi.cpp.vector-lua'
+local gl = require 'gl.setup'(cmdline.gl)
+local glnumber = require 'gl.number'
+local GLTex2D = require 'gl.tex2d'
+local GLSceneObject = require 'gl.sceneobject'
+local GLHSVTex2D = require 'gl.hsvtex2d'
+local GLArrayBuffer = require 'gl.arraybuffer'
+local GLTex3D = require 'gl.tex3d'
 local ig = require 'imgui'
 
 local volSplatCachePath = path'volumesplatcache.txt'
@@ -29,7 +49,12 @@ timer('building cache', function()
 
 	local numDays = 360
 
+	-- this is a rua file
+	-- funny thing
+	-- if I run this in rua then the Tex2D+Tex3D mixed for some reason causes a segfault
+	-- but disable any of langfix, Tex2D, or Tex3D and it works fine.
 	local dayInSec = require 'basis'.dayInSec
+
 	local getEarthquakes = require 'earthquakes'.getEarthquakes
 	local earthquakes = getEarthquakes(numDays)
 
@@ -253,9 +278,15 @@ void main() {
 		depth = densitySize.z,
 		internalFormat = gl.GL_R32F,
 		data = densityData,
+		--[[ mipmapping messes with transparency across slices so ....
 		magFilter = gl.GL_LINEAR,
 		minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
 		generateMipmap = true,
+		--]]
+		-- [[
+		magFilter = gl.GL_NEAREST,
+		minFilter = gl.GL_NEAREST,
+		--]]
 		wrap = {
 			s = gl.GL_CLAMP_TO_EDGE,
 			t = gl.GL_CLAMP_TO_EDGE,

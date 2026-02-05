@@ -27,3 +27,5 @@ TO PROGRAM:
 	- equirectangular is most simple
 	- or cubemap to reduce polar distortion (but still has some distortion at cube edges)
 	- or myrihedral projection to make it no distortion
+
+- compare with length of day https://hpiers.obspm.fr/eoppc/eop/eopc04/eopc04.1962-now
