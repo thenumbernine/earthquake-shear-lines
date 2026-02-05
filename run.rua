@@ -17,6 +17,7 @@ local vec2f = require 'vec-ffi.vec2f'
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
 local quatd = require 'vec-ffi.quatd'
+local vec4ui = require 'vec-ffi.create_vec3'{dim=4, ctype='uint32_t'}
 local vector = require 'ffi.cpp.vector-lua'
 
 local CLEnv = require 'cl.obj.env'
@@ -809,7 +810,7 @@ require 'vec-ffi.vec2i'	-- time
 				buffer = {
 					dim = 2,
 					useVec = true,
-					ctype = 'vec2i_t',
+					ctype = 'vec2i',
 				},
 			},
 		},
@@ -861,7 +862,7 @@ require 'vec-ffi.vec2i'	-- time
 				buffer = {
 					dim = 2,
 					useVec = true,
-					ctype = 'vec2i_t',
+					ctype = 'vec2i',
 				},
 			},
 		},
@@ -2320,7 +2321,6 @@ App.screenshot=|:|do
 	self:screenshotToFile(self:getScreenShotFilename().path)
 end
 
-local vec4ui = require 'vec-ffi.create_vec3'{dim=4, ctype='uint32_t'}
 local clickID = vec4ui()
 
 local latLon = vec2f()	-- must be float[2] for glReadPixels

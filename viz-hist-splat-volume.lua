@@ -80,19 +80,19 @@ _G.densityData = densityData
 		local densityIndex = lonBin + lonRes * (latBin + latRes * timeBin)
 		densityData[densityIndex] = densityData[densityIndex] + energy
 	end
-	cache = ffi.string(densitySize.s, ffi.sizeof'vec3i_t')
+	cache = ffi.string(densitySize.s, ffi.sizeof(vec3i))
 		..ffi.string(densityData, ffi.sizeof(densityData))
-	assert.len(cache, ffi.sizeof'vec3i_t' + ffi.sizeof'float' * densitySize:volume())
+	assert.len(cache, ffi.sizeof(vec3i) + ffi.sizeof'float' * densitySize:volume())
 	volSplatCachePath:write(cache)
 end)
 end
 assert.type(cache, 'string')
-assert.ge(#cache, ffi.sizeof'vec3i_t')
-local densitySize = ffi.cast('vec3i_t*', cache)[0]
+assert.ge(#cache, ffi.sizeof(vec3i))
+local densitySize = ffi.cast('vec3i*', cache)[0]
 print('densitySize', densitySize)
-assert.len(cache, ffi.sizeof'vec3i_t' + ffi.sizeof'float' * densitySize:volume())
+assert.len(cache, ffi.sizeof(vec3i) + ffi.sizeof'float' * densitySize:volume())
 _G.densityData = ffi.new('float[?]', densitySize:volume())
-ffi.copy(densityData, ffi.cast('char*', cache) + ffi.sizeof'vec3i_t', ffi.sizeof'float' * densitySize:volume())
+ffi.copy(densityData, ffi.cast('char*', cache) + ffi.sizeof(vec3i), ffi.sizeof'float' * densitySize:volume())
 
 
 local logDensityEpsilon = 1e-5
@@ -177,7 +177,7 @@ void main() {
 
 
 -- [=[
-	_G.lineVtxCPU = vector'vec3f_t'
+	_G.lineVtxCPU = vector(vec3f)
 	local cornerbits = function(i)
 		return bit.band(i,1),
 			bit.band(bit.rshift(i,1),1),
