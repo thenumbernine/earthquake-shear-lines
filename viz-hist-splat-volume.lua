@@ -29,7 +29,11 @@ local GLArrayBuffer = require 'gl.arraybuffer'
 local GLTex3D = require 'gl.tex3d'
 local ig = require 'imgui'
 
-local volSplatCachePath = path'volumesplatcache.txt'
+--local plot = 'earthquakeDensity'
+local plot = 'axisDensity'
+
+
+local volSplatCachePath = path('volumesplatcache-'..plot..'.txt')
 
 local cache
 if volSplatCachePath:exists() then
@@ -61,30 +65,160 @@ timer('building cache', function()
 	local densitySize = vec3i(lonRes, latRes, timeRes)
 	local densityData = ffi.new('float[?]', densitySize:volume())
 _G.densityData = densityData
-	for i=#earthquakes,1,-1 do
-		local eq = earthquakes[i]
 
-		local lonBin = math.floor((((eq.longitude + 180) / 360) % 1) * lonRes)
-		local latBin = math.floor((((eq.latitude + 90) / 180) % 1) * latRes)
-		local timeBin = math.floor((julianDay - eq.julianDay) / numDays * timeRes)
 
-		assert.le(0, lonBin)
-		assert.lt(lonBin, lonRes)
-		assert.le(0, latBin)
-		assert.lt(latBin, latRes)
-		assert.le(0, timeBin)
-		if timeBin >= timeRes then break end
+	if plot == 'earthquakeDensity' then
+		for i=#earthquakes,1,-1 do
+			local eq = earthquakes[i]
 
-		local energy = 10 ^ (1.5 * eq.mag + 4.4)	-- in joules
+			local lonBin = math.floor((((eq.longitude + 180) / 360) % 1) * lonRes)
+			local latBin = math.floor((((eq.latitude + 90) / 180) % 1) * latRes)
+			local timeBin = math.floor((julianDay - eq.julianDay) / numDays * timeRes)
 
-		local densityIndex = lonBin + lonRes * (latBin + latRes * timeBin)
-		densityData[densityIndex] = densityData[densityIndex] + energy
+			assert.le(0, lonBin)
+			assert.lt(lonBin, lonRes)
+			assert.le(0, latBin)
+			assert.lt(latBin, latRes)
+			assert.le(0, timeBin)
+			if timeBin >= timeRes then break end
+
+			local energy = 10 ^ (1.5 * eq.mag + 4.4)	-- in joules
+
+			local densityIndex = lonBin + lonRes * (latBin + latRes * timeBin)
+			densityData[densityIndex] = densityData[densityIndex] + energy
+		end
+	elseif plot == 'axisDensity' then
+
+		local dayInSec = require 'basis'.dayInSec
+		local getEarthquakes = require 'earthquakes'.getEarthquakes
+		local calcCircles = require 'circles'
+		local cartesianToLatLonWGS84 = require 'charts'.cartesianToLatLonWGS84
+		calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold = 1	-- degrees
+		calcCircles.prevTimeWindowInDays = 1		-- how far into the past
+		calcCircles.nextTimeWindowInDays = 0		-- how far into the future
+		local cosMinAngleDistFromQuakesThatFormedTheGeodesic = math.cos(math.rad(calcCircles.quakeMinAngleDistFromQuakesThatFormedTheGeodesic))
+
+		local lastTime = os.time()
+
+		for earthquakeIndex,eq in ipairs(earthquakes) do
+			local thisTime = os.time()
+			if thisTime ~= lastTime then
+				lastTime = thisTime
+				print(('%f%% finished'):format(100 * earthquakeIndex/#earthquakes))
+			end
+
+			local v = eq.xyznorm
+
+			local earthquakeWindowStartTime = eq.ostime - calcCircles.prevTimeWindowInDays * dayInSec
+			local earthquakeWindowEndTime = eq.ostime + calcCircles.nextTimeWindowInDays * dayInSec
+
+			local earthquakeWindowStartIndex = earthquakeIndex
+			for i=earthquakeIndex,1,-1 do
+				if earthquakes[i].ostime < earthquakeWindowStartTime then break end
+				earthquakeWindowStartIndex = i
+			end
+			local earthquakeWindowEndIndex = earthquakeIndex
+			for i=earthquakeIndex,#earthquakes do
+				if earthquakes[i].ostime > earthquakeWindowEndTime then break end
+				earthquakeWindowEndIndex = i
+			end
+
+			-- now find all pairs in the window that, with eq, make a great-arc, within calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold
+			for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex-1 do
+				if i == earthquakeIndex then
+					goto continue_1
+				end
+
+				local eq2 = earthquakes[i]
+				local v2 = eq2.xyznorm
+
+				local cosAngle12 = v:dot(v2)
+				if cosAngle12 > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
+					goto continue_1
+				end
+
+				for j=i+1,earthquakeWindowEndIndex do
+					if j == earthquakeIndex then
+						goto continue_2
+					end
+
+					local eq3 = earthquakes[j]
+					local v3 = eq3.xyznorm
+
+					local cosAngle13 = v:dot(v3)
+					if cosAngle13 > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
+						goto continue_2
+					end
+
+					-- TODO why use a separate angle filter between 1&2, 1&3 and between 2&3 ?
+					-- so instead of a 10 degree separation between 2 & 3 and a 5 degree separation between 1 & 2 and 1 & 3,
+					--  I'll just use 5 degrees for everyone
+					local cosAngle23 = v2:dot(v3)
+					if cosAngle23 > cosMinAngleDistFromQuakesThatFormedTheGeodesic then
+						goto continue_2
+					end
+
+					-- just going to assume filterDuplicatePointsAngleThreshold==0
+
+					local torque = v2:cross(v3)	-- TODO times pair of earthquake magnitudes or something?
+					local axisLen = torque:length()
+					local axis = torque * (1 / (math.max(axisLen, 1e-15)))
+
+					-- cos angle from axis = sine angle from rotation plane
+					local cosAngleFromAxis = axis:dot(v)
+					local angleFromAxis = math.acos(cosAngleFromAxis)
+					local angleFromArc = angleFromAxis - .5 * math.pi
+					local angleFromArcInDeg = math.abs(math.deg(angleFromArc))
+					if angleFromArcInDeg >= calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold then
+						goto continue_2
+					end
+
+					-- NOTICE I'm skipping uniques-only because I don't want to O(n^2) cycle through pairs
+
+					-- xyz to lat lon ...
+					for s=-1,1,2 do
+						local phi, lambda, height = cartesianToLatLonWGS84((s * axis):unpack())
+						local axisLat = ((math.deg(phi) + 90) % 180) - 90
+						local axisLon = (math.deg(lambda) + 180) % 360 - 180
+
+						local lonBin = math.floor((((axisLon + 180) / 360) % 1) * lonRes)
+						local latBin = math.floor((((axisLat + 90) / 180) % 1) * latRes)
+						local timeBin = math.floor((julianDay - eq.julianDay) / numDays * timeRes)
+
+						assert.le(0, lonBin)
+						assert.lt(lonBin, lonRes)
+						assert.le(0, latBin)
+						assert.lt(latBin, latRes)
+						assert.le(0, timeBin)
+						if timeBin < timeRes then
+							local avgMag = (eq.mag + eq2.mag + eq3.mag) / 3
+							local energy = 10 ^ (1.5 * avgMag + 4.4)	-- in joules
+
+							local densityIndex = lonBin + lonRes * (latBin + latRes * timeBin)
+							densityData[densityIndex] = densityData[densityIndex] + energy
+						end
+					end
+::continue_2::
+				end
+::continue_1::
+			end
+		end
+
+	else
+		error("idk what you want me to plot: "..tostring(plot))
 	end
+
 	cache = ffi.string(densitySize.s, ffi.sizeof(vec3i))
 		..ffi.string(densityData, ffi.sizeof(densityData))
 	assert.len(cache, ffi.sizeof(vec3i) + ffi.sizeof'float' * densitySize:volume())
 	volSplatCachePath:write(cache)
 end)
+
+	print[[
+you need rua to download (cuz of rua include files)
+but you need lua to run (cuz of segfaults idk where from)
+]]
+	os.exit()
 end
 assert.type(cache, 'string')
 assert.ge(#cache, ffi.sizeof(vec3i))
