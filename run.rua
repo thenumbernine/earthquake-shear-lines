@@ -11,7 +11,6 @@ local GLTex2D = require 'gl.tex2d'
 local GLGradientTex2D = require 'gl.gradienttex2d'
 local GLFramebuffer = require 'gl.framebuffer'
 local GLGlobal = require 'gl.global'
-local glreport = require 'gl.report'
 local ig = require 'imgui'
 local vec2f = require 'vec-ffi.vec2f'
 local vec2d = require 'vec-ffi.vec2d'
@@ -1381,7 +1380,6 @@ void main() {
 			data = smallbodies.v,
 			usage = gl.GL_DYNAMIC_DRAW,
 		}:unbind()
-assert(glreport'here')
 
 		self.drawSmallBodiesSceneObj = GLSceneObject{
 			-- same as pairCrossPointShader but with a dvec for double smallbody inputs
@@ -2160,8 +2158,6 @@ print("...hasn't been dl'd, dl'ing...")
 		end
 	end
 	--]]
-
-	glreport'here'
 end
 
 App.updateEarthquakeIndex = |:| do
