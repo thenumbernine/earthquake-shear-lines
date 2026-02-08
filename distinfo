@@ -38,6 +38,7 @@ deps = {
 	"imgui",
 	"sdl",
 	"solarsystem",
+	"stl",
 	"template",
 	"vec-ffi",
 	"langfix",

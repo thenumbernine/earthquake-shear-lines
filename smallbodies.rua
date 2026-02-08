@@ -5,7 +5,7 @@ This data is currently spread out between my solarsystem project's 'jpl-ssd-smal
 Maybe I should merge those two into one separate project... hmm... to be responsible for the binary blob, kind of like solarsystem-lua is responsible for the ephemeris data ... and just require it into here... hmm...
 Yeah, the original download & parse script is horrible, and was reworked many times over for various things (including a BSP tree point cloud data set, and SQL output), so it's really a mess.
 --]]
-local vector = require 'ffi.cpp.vector-lua'
+local vector = require 'stl.vector-lua'
 
 -- here and in solarsystem/visualize-smallbodies.lua
 local smallBodyTypeCode = [[
