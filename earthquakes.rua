@@ -118,9 +118,15 @@ local getEarthquakes=|prevDays|do
 assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 			eq.julianDay = Julian.fromCalendar(eq.date)
 			eq.planets = getPlanetsDelayedInfluence(eq.julianDay)
-			local earthPos = eq.planets[Planets.indexes.earth].pos
+			local earth = eq.planets[Planets.indexes.earth]
+			-- save here before permuting all pos & vel (including earth)
+			local earthPos = earth.pos
+			local earthVel = earth.vel
 			for i,p in ipairs(eq.planets) do
+				-- should this frame correction be done here or in 'getPlanetsDelayedInfluence' ?
 				p.pos = rotateFromSolarToEarthFrame(p.pos - earthPos, eq.julianDay)
+				p.vel = rotateFromSolarToEarthFrame(p.vel - earthVel, eq.julianDay)	-- earth centered vel
+				p.orbitAxis = p.pos:normalize():cross(p.vel:normalize()):normalize()
 			end
 			eq.earthPosInSolarSystem = earthPos	-- in earth frame but sun centered ...
 			eq.xyz = latLonToXYZ(eq.latitude, eq.longitude)
@@ -140,12 +146,23 @@ assert.eq(ffi.typeof(eq.ostime), ffi.typeof'int64_t')
 				if planetClass.name ~= 'earth'
 				and planetClass.name ~= 'EM_Bary'
 				then
-					local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
-					local planetDir = planetPos:normalize()
+					local planet = eq.planets[Planets.indexes[planetClass.name]]
+					-- [[ sum the planets orbit axis, TODO weight by something like dist or momentum or grav param
+					eq.orbitAxis = eq.orbitAxis + planet.orbitAxis
+					--]]
+					-- how is precision doing? do i have to normalize 3x?
+					--[[ using vel
+					-- TODO this doesn't look correcct...
+					local planetDir = planet.pos:normalize()
+					eq.orbitAxis = planetDir:cross(planet.vel:normalize()):normalize()
+					--]]
+					--[[ using pos and previous pos
+					local planetDir = planet.pos:normalize()
 					if prevPlanetDir then
 						eq.orbitAxis += planetDir:cross(prevPlanetDir)
 					end
 					prevPlanetDir = planetDir
+					--]]
 				end
 			end
 			eq.orbitAxis = eq.orbitAxis:normalize()

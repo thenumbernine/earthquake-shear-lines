@@ -307,9 +307,9 @@ local vars = table(
 		showDrapTex = false,		-- keep it off by default for now ... it works but it adds too many moving pieces
 		drapTexAlpha = .5,
 
-		calcTidesVert = false,
+		calcTidesVert = true,
 		calcTidesHorz = false,
-		calcGravVert = true,
+		calcGravVert = false,
 		calcGravHorz = false,
 		calcCrossPos2D = false,	-- cross force with moment arm
 		calcCrossPos3D = false,	-- cross force with position (incl z along axis)
@@ -326,7 +326,7 @@ local vars = table(
 			c.name
 		)),	-- drawPlanets[name] = true
 		calcPlanets = table.mapi(Planets.planetClasses, |c|(
-			c.name == 'sun' or c.name == 'moon' or c.name == 'earth',
+			c.name == 'sun' or c.name == 'moon',
 			c.name
 		)),	-- calcPlanets[name] = true
 		drawPlanetAngles = drawPlanetAngles:mapi(|x|(
@@ -1701,7 +1701,8 @@ App.refreshVisibleCircles = |:| do
 			end
 		end
 
-		-- finally finally, solar orbital plane
+		self.numOrbitPlaneCircles = 0
+		--[[ finally finally, orbital plane ... for earth only:
 		do
 			local axis2 = basisFor(eq.orbitAxis)
 			local axis3 = eq.orbitAxis:cross(axis2)
@@ -1709,9 +1710,31 @@ App.refreshVisibleCircles = |:| do
 			axis2CPU:emplace_back():set(axis2:unpack())
 			axis3CPU:emplace_back():set(axis3:unpack())
 			colorCPU:emplace_back():set(1,1,1)
-			--influenceCPU:emplace_back()[0] = 1
 			centerPosCPU:emplace_back():set(0,0,0,1)
+			--influenceCPU:emplace_back()[0] = 1
+			self.numOrbitPlaneCircles += 1
 		end
+		--]]
+		-- [[ orbiting plane for each planet:
+		for _,planetClass in ipairs(Planets.planetClasses) do
+			if planetClass.name ~= 'earth'
+			and planetClass.name ~= 'EM_Bary'
+			then
+				local planet = eq.planets[Planets.indexes[planetClass.name]]
+				local axis2 = basisFor(planet.orbitAxis)
+				local axis3 = eq.orbitAxis:cross(axis2)
+				axisCPU:emplace_back():set(planet.orbitAxis)
+				axis2CPU:emplace_back():set(axis2:unpack())
+				axis3CPU:emplace_back():set(axis3:unpack())
+				colorCPU:emplace_back():set(table.unpack(planetClass.color))
+				--local c = planet.color
+				--colorCPU:emplace_back():set(.5 * c[1], .5 * c[2], .5 * c[3])
+				centerPosCPU:emplace_back():set(0,0,0,1)
+				--influenceCPU:emplace_back()[0] = 1
+				self.numOrbitPlaneCircles += 1
+			end
+		end
+		--]]
 
 		-- finally finall finally finally, geospatial query selector
 		-- TODO how about refreshing *ONLY THIS* when we drag the mouse, and not *EVERYTHING*
@@ -2018,16 +2041,37 @@ print("...hasn't been dl'd, dl'ing...")
 			end
 
 			-- last draw the orbit plane
-			sceneObj.uniforms.declinationFromAxis = .5 * math.pi
-			sceneObj.geometry.instanceOffset = self.circlesObjInstanceCount + #drawPlanetClasses * #drawPlanetAngles
-			sceneObj:draw()
+			-- NOTICE FIXME TODO this has to match up with the circlesObj CPU emplace_back order
+			local instanceOffset = self.circlesObjInstanceCount
+				+ #drawPlanetClasses * #drawPlanetAngles
+			-- TODO use instanced geometry to save the index of the planet in the shader as the instance ID?
+			--  for the sake of the picking and the tooltip?
+			for planetIndex,planetClass in ipairs(Planets.planetClasses) do
+				if planetClass.name ~= 'earth'
+				and planetClass.name ~= 'EM_Bary'
+				then
+					sceneObj.uniforms.declinationFromAxis = .5 * math.pi
+					sceneObj.uniforms.idhi = 5 + planetIndex
+					sceneObj.geometry.instanceOffset = instanceOffset
+					sceneObj:draw()
+					instanceOffset += 1
+				end
+			end
 
 			-- last draw the geoselector query
 			if selectSpatialAngle <= 180 then
+				sceneObj.uniforms.idhi = 999
 				sceneObj.uniforms.declinationFromAxis = math.rad(selectSpatialAngle)	-- why again is this the only radians thing here?
-				sceneObj.geometry.instanceOffset += 1	-- one past orbital plane
+				sceneObj.geometry.instanceOffset = instanceOffset	-- one past orbital plane
 				sceneObj:draw()
 			end
+
+			-- reset the circle idhi to its default of 3 for earthquake geodesics
+			sceneObj.uniforms.idhi = nil
+			sceneObj.program
+				:use()
+				:setUniform('idhi', 3)
+				:useNone()
 
 			sceneObj.geometry.instanceCount = nil
 			sceneObj.geometry.instanceOffset = nil
@@ -2393,6 +2437,7 @@ App.event = |:,e| do
 				self.mouseOverFlareIndex = nil
 				self.mouseOverGeodesicIndex = nil
 				self.mouseOverSmallBodyIndex = nil
+				self.mouseOverOrbitPlaneIndex = nil
 				if clickID.y == 1 then	-- earthquakes
 					self.mouseOverEarthquakeIndex = clickID.x
 				elseif clickID.y == 2 then	-- flares
@@ -2401,6 +2446,8 @@ App.event = |:,e| do
 					self.mouseOverGeodesicIndex = clickID.x
 				elseif clickID.y == 4 then	-- great-arcs
 					self.mouseOverSmallBodyIndex = clickID.x
+				elseif clickID.y >= 5 then	-- orbit plane or geoselectory query
+					self.mouseOverOrbitPlaneIndex = clickID.y - 5
 				end
 			elseif vars.clickMethod == clickMethod.selectSpatialQuery
 			and selectSpatialAngle <= 180	-- if we've already done a down-click...
@@ -2878,6 +2925,10 @@ App.updateGUI = |:| do
 			ig.igText('smallbody '..ffi.string(smallbody.name))
 			ig.igEndTooltip()
 		end
+	elseif self.mouseOverOrbitPlaneIndex then
+		ig.igBeginTooltip()
+		ig.igText('orbit plane '..Planets.planetClasses[self.mouseOverOrbitPlaneIndex].name)
+		ig.igEndTooltip()
 	end
 end
 

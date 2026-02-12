@@ -40,7 +40,7 @@ M.filterDuplicateTouchingArcsAngleThreshold = 0
 -- tolerance of how close a quake must be to a previous circle to consider along the geodesic
 -- VERIFY: birthday problem, odds of two things overlapping in a discrete collection: P(x) = 1 - n! / ((n - x)! n^x)
 --M.quakeAlignWithPreviousGeodesicAngleThreshold = 0.1		-- in degrees ... odds of a pair overlapping in 360/0.1=3600 out of a sample size of 70.9 is 50% (odds of finding a geodesic amidst noise: birthday problem for set size of 3600)
-M.quakeAlignWithPreviousGeodesicAngleThreshold = 1	-- in degrees ... " " 360/1=360 " " 22 is 50% ... so you need to consistetly find geodesics in sets o less than 22 quakes
+M.quakeAlignWithPreviousGeodesicAngleThreshold = .1	-- in degrees ... " " 360/1=360 " " 22 is 50% ... so you need to consistetly find geodesics in sets o less than 22 quakes
 --M.quakeAlignWithPreviousGeodesicAngleThreshold = 2	-- in degrees ... " " 360/2=180 " " 17 is 50%
 --M.quakeAlignWithPreviousGeodesicAngleThreshold = 5	-- in degrees ... " " 360/5=72 " " 11 is 50%
 --M.quakeAlignWithPreviousGeodesicAngleThreshold = 10	-- in degrees ... " " 360/10=36 " " 8 is 50%
