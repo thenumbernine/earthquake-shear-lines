@@ -29,8 +29,8 @@ local GLArrayBuffer = require 'gl.arraybuffer'
 local GLTex3D = require 'gl.tex3d'
 local ig = require 'imgui'
 
---local plot = 'earthquakeDensity'
-local plot = 'axisDensity'
+local plot = 'earthquakeDensity'
+--local plot = 'axisDensity'
 
 
 local volSplatCachePath = path('volumesplatcache-'..plot..'.txt')
