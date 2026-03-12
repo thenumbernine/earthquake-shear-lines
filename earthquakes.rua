@@ -8,6 +8,7 @@ what to track ...
 	- by comparing dot of its axis with previous circles' axis
 - as we get too old, throw out old points and their respective great-arcs
 --]]
+local https = require 'ssl.https'	-- TODO I could make this optional, and without it I just don't do cache filesize validation...
 local vec3d = require 'vec-ffi.vec3d'
 local Julian = require 'solarsystem.julian'
 local Planets = require 'basis'.Planets
@@ -34,22 +35,46 @@ local getDayCache = |t, force| do
 	local datestr = ('%04d-%02d-%02d'):format(tt.year, tt.month, tt.day)
 	local csvpath = path('cache/'..datestr..'.csv')
 	local csvstr
-	local changed
-	if force or not csvpath:exists() then
+	local cacheHasChanged
+
+	local fileSizeChanged
+
+	local url = 'https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'
+
+--[[ I was trying to query the size only to see if I had the most recent file
+-- but it looks like USGS webserver head requests don't send file size, maybe because it's a query ...
+	local head, code, headers, status = https.request{
+		url = url,
+		method = 'HEAD',
+		headers = {
+			Accept = '*/*',
+			['User-Agent'] = 'LuaSec',
+		},
+	}
+print('url', url)
+print('head', head, code, headers, status)
+print('headers', require 'ext.tolua'(headers))
+headers = table.map(headers, |v,k| (v,k:lower()))
+print('content-length', headers['content-length'])
+---]]
+
+	if force
+	or fileSizeChanged
+	or not csvpath:exists()
+	then
 		print('downloading '..datestr..'...')
-		local https = require 'ssl.https'
 		local reason
-		csvstr, reason = https.request('https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time')
+		csvstr, reason = https.request(url)
 		if not csvstr then
 			print('...failed to download: '..tostring(reason))
 		else
 			if force then
 				if csvpath:exists() then
-					changed = assert(csvpath:read()) ~= csvstr
+					cacheHasChanged = assert(csvpath:read()) ~= csvstr
 				end
 			else
 				-- if no force and it's a new file, then flag it for 'changed'
-				changed = true
+				cacheHasChanged = true
 			end
 
 			assert(csvpath:write(csvstr))
@@ -69,7 +94,7 @@ local getDayCache = |t, force| do
 			neq[k] = tonumber(eq[k]) or eq[k]
 		end
 		return neq
-	end), changed
+	end), cacheHasChanged
 end
 
 local getEarthquakes=|prevDays|do
