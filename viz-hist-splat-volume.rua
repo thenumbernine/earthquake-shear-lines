@@ -69,8 +69,16 @@ _G.densityData = densityData
 
 			local lonBin = math.floor((((eq.longitude + 180) / 360) % 1) * lonRes)
 			local latBin = math.floor((((eq.latitude + 90) / 180) % 1) * latRes)
-			local timeBin = math.floor((julianDay - eq.julianDay) / numDays * timeRes)
 
+-- [[ bin time by day of the year, linearly
+			local timeBin = math.floor((julianDay - eq.julianDay) / numDays * timeRes)
+--]]
+--[[ bin by time of the day
+			local timeBin = math.floor((eq.julianDay % 1) * timeRes)
+--]]
+--[[ bin by time of the month?  synodic period, i.e. relative to sun as well?
+			local timeBin = math.floor(((eq.julianDay / 29.53) % 1) * timeRes)
+--]]
 			assert.le(0, lonBin)
 			assert.lt(lonBin, lonRes)
 			assert.le(0, latBin)
