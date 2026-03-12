@@ -1,4 +1,4 @@
-#!/usr/bin/env luajit
+#!/usr/bin/env rua
 --[[
 splat all quakes onto a volumetric binning of lat x lon x time
 
@@ -9,12 +9,6 @@ TODO
 - ... FFT find frequencies
 - ... fix the raytracing to use ds^2 = dx^2+dy^2+dz^2 based on camera orientation
 --]]
-local ffi = require 'ffi'
-local path = require 'ext.path'
-local table = require 'ext.table'
-local range = require 'ext.range'
-local assert = require 'ext.assert'
-local cmdline = require 'ext.cmdline'(...)
 local vec2f = require 'vec-ffi.vec2f'
 local vec3i = require 'vec-ffi.vec3i'
 local vec3f = require 'vec-ffi.vec3f'
@@ -38,6 +32,7 @@ local volSplatCachePath = path('volumesplatcache-'..plot..'.txt')
 local cache
 if volSplatCachePath:exists() then
 	cache = assert(volSplatCachePath:read())
+_G.cache = cache
 else
 	local t = timer.time()
 print('ostime', t)
@@ -63,6 +58,7 @@ timer('building cache', function()
 	local earthquakes = getEarthquakes(numDays)
 
 	local densitySize = vec3i(lonRes, latRes, timeRes)
+_G.densitySize = densitySize
 	local densityData = ffi.new('float[?]', densitySize:volume())
 _G.densityData = densityData
 
@@ -210,19 +206,16 @@ _G.densityData = densityData
 
 	cache = ffi.string(densitySize.s, ffi.sizeof(vec3i))
 		..ffi.string(densityData, ffi.sizeof(densityData))
+_G.cache = cache
 	assert.len(cache, ffi.sizeof(vec3i) + ffi.sizeof'float' * densitySize:volume())
 	volSplatCachePath:write(cache)
 end)
 
-	print[[
-you need rua to download (cuz of rua include files)
-but you need lua to run (cuz of segfaults idk where from)
-]]
-	os.exit()
 end
 assert.type(cache, 'string')
 assert.ge(#cache, ffi.sizeof(vec3i))
 local densitySize = ffi.cast('vec3i*', cache)[0]
+_G.densitySize = densitySize
 print('densitySize', densitySize)
 assert.len(cache, ffi.sizeof(vec3i) + ffi.sizeof'float' * densitySize:volume())
 _G.densityData = ffi.new('float[?]', densitySize:volume())
