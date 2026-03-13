@@ -36,10 +36,11 @@ deps = {
 	"gnuplot",
 	"image",
 	"imgui",
+	"langfix",
 	"sdl",
 	"solarsystem",
 	"stl",
 	"template",
+	"url",
 	"vec-ffi",
-	"langfix",
 }

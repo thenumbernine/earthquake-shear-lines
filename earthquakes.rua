@@ -10,6 +10,7 @@ what to track ...
 --]]
 local https = require 'ssl.https'	-- TODO I could make this optional, and without it I just don't do cache filesize validation...
 local vec3d = require 'vec-ffi.vec3d'
+local URL = require 'url'
 local Julian = require 'solarsystem.julian'
 local Planets = require 'basis'.Planets
 local getPlanetsDelayedInfluence = require 'basis'.getPlanetsDelayedInfluence
@@ -39,7 +40,17 @@ local getDayCache = |t, force| do
 
 	local fileSizeChanged
 
-	local url = 'https://earthquake.usgs.gov/fdsnws/event/1/query.csv?starttime='..datestr..'%2000:00:00&endtime='..datestr..'%2023:59:59&minmagnitude=2.5&orderby=time'
+	local url = URL{
+		scheme = 'https',
+		host = 'earthquake.usgs.gov',
+		path = 'fdsnws/event/1/query.csv',
+		query = {
+			starttime = datestr..' 00:00:00',
+			endtime = datestr..' 23:59:59',
+			minmagnitude = 2.5,
+			orderby = 'time',
+		},
+	}:tostring()
 
 --[[ I was trying to query the size only to see if I had the most recent file
 -- but it looks like USGS webserver head requests don't send file size, maybe because it's a query ...
