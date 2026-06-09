@@ -2050,10 +2050,12 @@ print("...hasn't been dl'd, dl'ing...")
 				if planetClass.name ~= 'earth'
 				and planetClass.name ~= 'EM_Bary'
 				then
-					sceneObj.uniforms.declinationFromAxis = .5 * math.pi
-					sceneObj.uniforms.idhi = 5 + planetIndex
-					sceneObj.geometry.instanceOffset = instanceOffset
-					sceneObj:draw()
+					if vars.drawPlanets[planetClass.name] then
+						sceneObj.uniforms.declinationFromAxis = .5 * math.pi
+						sceneObj.uniforms.idhi = 5 + planetIndex
+						sceneObj.geometry.instanceOffset = instanceOffset
+						sceneObj:draw()
+					end
 					instanceOffset += 1
 				end
 			end
