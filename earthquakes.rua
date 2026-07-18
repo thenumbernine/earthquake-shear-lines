@@ -111,8 +111,8 @@ end
 local getEarthquakes=|prevDays|do
 	--prevDays ??= 1	-- debugging
 	--prevDays ??= 31
-	--prevDays ??= 60
-	prevDays = 120
+	prevDays ??= 60
+	--prevDays ??= 120
 	--prevDays ??= 365
 
 	local earthquakes = table()

@@ -2875,6 +2875,8 @@ App.updateGUI = |:| do
 			..', place='..eq.place
 			..', time='..eq.time
 			..', julianDay='..eq.julianDay
+			..', -'..calcCircles.prevTimeWindowInDays..'/+'..calcCircles.nextTimeWindowInDays
+			..' @ '..calcCircles.quakeAlignWithPreviousGeodesicAngleThreshold..' degrees'
 		) then
 			ig.igEndMenu()
 		end
