@@ -8,6 +8,7 @@ local prevTimeWindowInDays = 3		-- how far into the past
 local nextTimeWindowInDays = 0		-- how far into the future
 
 local earthquakes = getEarthquakes(365)
+	:filteri(|eq| ((eq.mag or 0) > 5))
 
 local outpath = path(
 	'earthquake_count_over_time_days='..prevTimeWindowInDays..','..nextTimeWindowInDays
@@ -15,7 +16,7 @@ local outpath = path(
 )
 local outfile = assert(outpath:open'w')
 
-local function fprint(...)
+local fprint = |...|do
 	print(...)
 	for i=1,select('#', ...) do
 		if i > 1 then outfile:write'\t' end
@@ -42,6 +43,7 @@ for earthquakeIndex,eq in ipairs(earthquakes) do
 		earthquakeWindowEndIndex = i
 	end
 
+	-- # quakes in window = size of window in elements
 	local earthquakeWindowSize = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
 
 	fprint(tonumber(eq.ostime), earthquakeWindowSize, '#', eq.mag, eq.depth..'km', eq.time, eq.place)
@@ -52,7 +54,7 @@ local graphoutpath = outpath:setext'png'
 local gnuplot = require 'gnuplot'
 gnuplot{
 	terminal = 'png size 1024,768',
-	output = graphoutpath.path, 
+	output = graphoutpath.path,
 	style = 'data lines',
 	xdata = 'time',
 	timefmt = '%s',
