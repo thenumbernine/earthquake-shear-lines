@@ -1191,23 +1191,24 @@ void main() {
 		print('using CL precision', self.env.real)
 		print('use CL/GL sharing?', self.env.useGLSharing)
 
-		smallbodies = require 'smallbodies'.smallbodies
-		smallBodyTypeCode = smallbodies and require 'smallbodies'.smallBodyTypeCode
-		smallbodies_julianResetDay = smallbodies and require'smallbodies'.julianDay
+		if not cmdline.nosmallbodies then
+			smallbodies = require 'smallbodies'.smallbodies
+			smallBodyTypeCode = smallbodies and require 'smallbodies'.smallBodyTypeCode
+			smallbodies_julianResetDay = smallbodies and require'smallbodies'.julianDay
 
-		if ffi.typeof'realsb' == ffi.typeof'double' then
-			clArgRealsb = clArgDouble
-			clArgRealsb4 = |x,y,z,w| do
-				doubleptr[0] = x
-				doubleptr[1] = y
-				doubleptr[2] = z
-				doubleptr[3] = w
-				return {ptr=doubleptr + 0, size=ffi.sizeof'realsb4'}
+			if ffi.typeof'realsb' == ffi.typeof'double' then
+				clArgRealsb = clArgDouble
+				clArgRealsb4 = |x,y,z,w| do
+					doubleptr[0] = x
+					doubleptr[1] = y
+					doubleptr[2] = z
+					doubleptr[3] = w
+					return {ptr=doubleptr + 0, size=ffi.sizeof'realsb4'}
+				end
+			else
+				error'FIXME'
 			end
-		else
-			error'FIXME'
 		end
-
 
 		local clnumber = require 'cl.obj.number'
 		self.clprogramObj = self.env:program{
