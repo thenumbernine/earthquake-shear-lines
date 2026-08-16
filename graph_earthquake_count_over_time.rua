@@ -8,7 +8,7 @@ local prevTimeWindowInDays = 3		-- how far into the past
 local nextTimeWindowInDays = 0		-- how far into the future
 
 local earthquakes = getEarthquakes(365)
-	:filteri(|eq| ((eq.mag or 0) > 5))
+--	:filteri(|eq| ((eq.mag or 0) > 5))
 
 local outpath = path(
 	'earthquake_count_over_time_days='..prevTimeWindowInDays..','..nextTimeWindowInDays
