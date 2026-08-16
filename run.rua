@@ -2049,6 +2049,7 @@ print("...hasn't been dl'd, dl'ing...")
 					for declAngleIndex,declAngle in ipairs(drawPlanetAngles) do
 						if vars.drawPlanetAngles[declAngle] then
 							sceneObj.uniforms.declinationFromAxis = math.rad(declAngle)
+-- TODO TODO TODO instanceOffset <=> glDrawArraysInstancedBaseInstance doesn't exist in GLES 3.0 <-> WebGL2
 							sceneObj.geometry.instanceOffset = self.circlesObjInstanceCount
 								+ (declAngleIndex - 1)
 								+ (planetClassIndex - 1) * #drawPlanetAngles
