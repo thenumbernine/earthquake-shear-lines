@@ -5,6 +5,13 @@ This data is currently spread out between my solarsystem project's 'jpl-ssd-smal
 Maybe I should merge those two into one separate project... hmm... to be responsible for the binary blob, kind of like solarsystem-lua is responsible for the ephemeris data ... and just require it into here... hmm...
 Yeah, the original download & parse script is horrible, and was reworked many times over for various things (including a BSP tree point cloud data set, and SQL output), so it's really a mess.
 --]]
+
+local smallbodiesPath = path'../solarsystem/smallbodies.raw'
+if not smallbodiesPath:exists() then
+	print("not reading smallbodies: couldn't find "..smallbodiesPath)
+	return {}
+end
+
 local vector = require 'stl.vector-lua'
 
 -- here and in solarsystem/visualize-smallbodies.lua
@@ -41,14 +48,14 @@ typedef struct SmallBody {
 // Everything above this line is (unpacked, 8 byte aligned) 96 bytes, so 1/3rd the data required.
 
 	int32_t horizonID;	//for numbered asteroids only
-	
+
 	// TODO maybe put these in a separate structure? since we're at 422 MB ...
 	int8_t name[44];
 	int8_t orbitSolutionReference[13];
 
 	//computed parameters
 	// TODO maybe we shouldn't store them? This is now at 422 MB
-	int64_t index;						// Wait, this is just the index into the array ... smh why did I do that?  Because I was reuisng the struct with other things that did lookup back into the struct ... smh ... 
+	int64_t index;						// Wait, this is just the index into the array ... smh why did I do that?  Because I was reuisng the struct with other things that did lookup back into the struct ... smh ...
 	double pos[3], vel[3], A[3], B[3];
 	double eccentricAnomaly;
 	double timeOfPeriapsisCrossing;
@@ -58,15 +65,9 @@ typedef struct SmallBody {
 } SmallBody;
 ]]
 
+-- depends on OpenCL types to have been defined...
 ffi.cdef(smallBodyTypeCode)
 assert.eq(ffi.sizeof'SmallBody', 304)
-
-local smallbodiesPath = path'../solarsystem/smallbodies.raw'
-
-if not smallbodiesPath:exists() then
-	print("not reading smallbodies: couldn't find "..smallbodiesPath)
-	return {}
-end
 
 local smallBodyStr = assert(smallbodiesPath:read())
 assert.eq(#smallBodyStr % ffi.sizeof'SmallBody', 0)

@@ -1,7 +1,7 @@
 #!/usr/bin/env rua
 local template = require 'template'
 local sdl = require 'sdl'
-local gl = require 'gl'
+local gl = require 'gl.setup'(cmdline.gl)
 local Image = require 'image'
 local GLSceneObject = require 'gl.sceneobject'
 local GLArrayBuffer = require 'gl.arraybuffer'
@@ -18,9 +18,6 @@ local vec3d = require 'vec-ffi.vec3d'
 local quatd = require 'vec-ffi.quatd'
 local vec4ui = require 'vec-ffi.create_vec3'{dim=4, ctype='uint32_t'}
 local vector = require 'stl.vector-lua'
-
-local CLEnv = require 'cl.obj.env'
-local clnumber = require 'cl.obj.number'
 
 local Planets = require 'basis'.Planets
 local basisFor = require 'basis'.basisFor
@@ -40,7 +37,10 @@ local checkDuration = 60*5	-- re-check every 5 mins ... disabled atm cuz it runs
 
 local flares = require 'flares'
 
-local smallbodies = require 'smallbodies'.smallbodies
+-- load upon opencl load (since it needs opencl to load)
+local smallbodies, smallBodyTypeCode, smallbodies_julianResetDay
+local clArgRealsb, clArgRealsb4
+
 local sunMass_kg = 1.9891e+30
 local gravitationalConstant = 6.6738480e-11	-- m^3 / (kg * s^2)
 local smallbodies_gravitationalParameter = gravitationalConstant * sunMass_kg	--assuming the comet mass is negligible, since the comet mass is not provided
@@ -68,20 +68,6 @@ local doubleptr = ffi.new'double[4]'
 local clArgDouble = |x| do
 	doubleptr[0] = x
 	return {ptr=doubleptr + 0, size=ffi.sizeof'double'}
-end
-
-local clArgRealsb, clArgRealsb4
-if ffi.typeof'realsb' == ffi.typeof'double' then
-	clArgRealsb = clArgDouble
-	clArgRealsb4 = |x,y,z,w| do
-		doubleptr[0] = x
-		doubleptr[1] = y
-		doubleptr[2] = z
-		doubleptr[3] = w
-		return {ptr=doubleptr + 0, size=ffi.sizeof'realsb4'}
-	end
-else
-	error'FIXME'
 end
 
 for _,name in ipairs(chartCNames) do
@@ -1172,54 +1158,82 @@ void main() {
 	--]=]
 
 
-	-- while we're here, let's compute the tidal and gravitational forces of our planets ...
-	-- TODO take it from my solarsystem project where I'm already doing this
-	-- but compute shader? does GL support double buffers? I don't think so . . .
-	-- maybe I have to use OpenCL now
-
 	self.clsize = {200,100}		-- or maybe "forceTexDim" or something
 	self.clvolume = self.clsize[1] * self.clsize[2]
 
-	-- hmm, seems the stupid graphics industry politics has destroyed opencl and forced my hand to either vulkan (shitty overly complicated to do simple things) or gl-compute (shitty for its lack of features and lack of support)
-	-- or maybe I can just blame AMD since this is supported just fine on Intel .. but without CL/GL interop ...
-	-- so for interop's sake and for AMD support's sake, might as well rewrite this as GL Compute
-	self.env = CLEnv{
-		size = self.clsize,
-		precision = cmdline.clprecision or 'double',
-		useGLSharing = cmdline.useGLSharing or false,	-- default to false since it doesn't seem to work for linux anymore (cuz opencl went to trash in the last 10 years)
-		sdlWindow = self.window,
-		sdlGLContext = self.sdlCtx,
-		-- TODO how about a getter-for-cmdline-obj ?
-		getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
-		getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
-		--deviceType = CLEnv.getDeviceTypeFromCmdLine(...),
-	}
-	print('using CL precision', self.env.real)
-	print('use CL/GL sharing?', self.env.useGLSharing)
+	-- use cli arg 'nocl' to disable opencl
+	-- hmm should I make op handle varargs?
+	local CLEnv = not cmdline.nocl and op.land(pcall(require, 'cl.obj.env'))
 
-	self.clprogramObj = self.env:program{
-		code = template(assert(path'calcs.cl':read()), {
-			clnumber = clnumber,
+	if not CLEnv then
+		print("can't find OpenCL -- sorry, force calculations won't be available.")
+		vars.forceTexAlpha = 0
+	else	-- has CLEnv
+		-- while we're here, let's compute the tidal and gravitational forces of our planets ...
+		-- TODO take it from my solarsystem project where I'm already doing this
+		-- but compute shader? does GL support double buffers? I don't think so . . .
+		-- maybe I have to use OpenCL now
 
-			-- for force calcs
-			useGLSharing = self.env.useGLSharing,
-			calcFlagsCode = calcFlagsCode,
-			clsize = self.clsize,
-			WGS84_e = math.sqrt(1. - charts.WGS84.b^2 / charts.WGS84.a^2),
-			Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
+		-- hmm, seems the stupid graphics industry politics has destroyed opencl and forced my hand to either vulkan (shitty overly complicated to do simple things) or gl-compute (shitty for its lack of features and lack of support)
+		-- or maybe I can just blame AMD since this is supported just fine on Intel .. but without CL/GL interop ...
+		-- so for interop's sake and for AMD support's sake, might as well rewrite this as GL Compute
+		self.env = CLEnv{
+			size = self.clsize,
+			precision = cmdline.clprecision or 'double',
+			useGLSharing = cmdline.useGLSharing or false,	-- default to false since it doesn't seem to work for linux anymore (cuz opencl went to trash in the last 10 years)
+			sdlWindow = self.window,
+			sdlGLContext = self.sdlCtx,
+			-- TODO how about a getter-for-cmdline-obj ?
+			getPlatform = CLEnv.getterForIdent(cmdline.platform, 'platform'),
+			getDevices = CLEnv.getterForIdent(cmdline.device, 'device'),
+			--deviceType = CLEnv.getDeviceTypeFromCmdLine(...),
+		}
+		print('using CL precision', self.env.real)
+		print('use CL/GL sharing?', self.env.useGLSharing)
 
-			-- for small body calcs:
-			hasSmallBodies = not not smallbodies,
-			numSmallBodies = smallbodies and #smallbodies,
-			smallBodyTypeCode = smallbodies and require 'smallbodies'.smallBodyTypeCode,
-			smallbodies_gravitationalParameter = smallbodies and smallbodies_gravitationalParameter,
-			smallbodies_julianResetDay = smallbodies and require 'smallbodies'.julianDay,
-		}),
-	}
-	self.clprogramObj:compile()
+		smallbodies = require 'smallbodies'.smallbodies
+		smallBodyTypeCode = smallbodies and require 'smallbodies'.smallBodyTypeCode
+		smallbodies_julianResetDay = smallbodies and require'smallbodies'.julianDay
+
+		if ffi.typeof'realsb' == ffi.typeof'double' then
+			clArgRealsb = clArgDouble
+			clArgRealsb4 = |x,y,z,w| do
+				doubleptr[0] = x
+				doubleptr[1] = y
+				doubleptr[2] = z
+				doubleptr[3] = w
+				return {ptr=doubleptr + 0, size=ffi.sizeof'realsb4'}
+			end
+		else
+			error'FIXME'
+		end
 
 
-	local internalFormat = self.env.useGLSharing and gl.GL_RGBA32F or gl.GL_R32F
+		local clnumber = require 'cl.obj.number'
+		self.clprogramObj = self.env:program{
+			code = template(assert(path'calcs.cl':read()), {
+				clnumber = clnumber,
+
+				-- for force calcs
+				useGLSharing = self.env.useGLSharing,
+				calcFlagsCode = calcFlagsCode,
+				clsize = self.clsize,
+				WGS84_e = math.sqrt(1. - charts.WGS84.b^2 / charts.WGS84.a^2),
+				Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
+
+				-- for small body calcs:
+				hasSmallBodies = not not smallbodies,
+				numSmallBodies = smallbodies and #smallbodies,
+				smallBodyTypeCode = smallBodyTypeCode,
+				smallbodies_gravitationalParameter = smallbodies and smallbodies_gravitationalParameter,
+				smallbodies_julianResetDay = smallbodies_julianResetDay,
+			}),
+		}
+		self.clprogramObj:compile()
+	end
+
+
+	local internalFormat = self.env?.useGLSharing and gl.GL_RGBA32F or gl.GL_R32F
 	--local internalFormat = gl.GL_R32F
 	local info = require 'gl.tex'.formatInfoForInternalFormat[internalFormat]
 	self.forceTex = GLTex2D{
@@ -1235,65 +1249,69 @@ void main() {
 	}:unbind()
 	self.globeObj.texs[2] = self.forceTex
 
-	self.forceBuffer = self.env:buffer{name='forceBuffer', type='real'}
-	self.dforceBuffer = self.env:buffer{name='dforceBuffer', type='real'}	-- for when you use gradients
 
-	self.rescaleKernel = self.clprogramObj:kernel'rescale'
-	self.rescaleKernel.obj:setArg(1, self.forceBuffer)
+	if self.env then
+		self.forceBuffer = self.env:buffer{name='forceBuffer', type='real'}
+		self.dforceBuffer = self.env:buffer{name='dforceBuffer', type='real'}	-- for when you use gradients
 
-	if self.env.useGLSharing then
-		local CLImageGL = require 'cl.imagegl'
-		self.forceTexCLImageGL = CLImageGL{
-			context = self.env.ctx,
-			tex = self.forceTex,
-			write = true,
-		}
-		self.rescaleKernel.obj:setArg(0, self.forceTexCLImageGL)
-	else
-		self.rescaleForceCPUBuf = vector('float', self.clvolume)
+		self.rescaleKernel = self.clprogramObj:kernel'rescale'
+		self.rescaleKernel.obj:setArg(1, self.forceBuffer)
+
+		if self.env.useGLSharing then
+			local CLImageGL = require 'cl.imagegl'
+			self.forceTexCLImageGL = CLImageGL{
+				context = self.env.ctx,
+				tex = self.forceTex,
+				write = true,
+			}
+			self.rescaleKernel.obj:setArg(0, self.forceTexCLImageGL)
+		else
+			self.rescaleForceCPUBuf = vector('float', self.clvolume)
 assert.len(self.rescaleForceCPUBuf, self.clvolume)
-		self.rescaleForceBuffer = self.env:buffer{name='forceBuffer', type='float'}
-		self.rescaleKernel.obj:setArg(0, self.rescaleForceBuffer)
-		self.forceTex.data = self.rescaleForceCPUBuf.v	-- for forceTex:subimage() calls
+			self.rescaleForceBuffer = self.env:buffer{name='forceBuffer', type='float'}
+			self.rescaleKernel.obj:setArg(0, self.rescaleForceBuffer)
+			self.forceTex.data = self.rescaleForceCPUBuf.v	-- for forceTex:subimage() calls
+		end
+
+		self.reduceBuffer = self.env:buffer{name='reduceBuffer', type='real'}
+		self.reduceSwapBuffer = self.env:buffer{name='reduceSwapBuffer', type='real'}
+
+		self.reduceResultPtr = ffi.new'real[1]'
+		self.reduceResultPtr[0] = 0
+
+		self.planetPosRelEarthCPUBuf = vector('real4', #Planets.planetClasses)
+		self.planetPosRelEarthBuffer = self.env:buffer{
+			name = 'planetPosRelEarthBuffer',
+			type = 'real4',
+			size = {#Planets.planetClasses},
+		}	-- all planets, including earth, because maybe we want it too.
+
+		self.calcTideAndGravKernel = self.clprogramObj:kernel'calcTideAndGrav'
+		self.calcTideAndGravKernel.obj:setArg(0, self.forceBuffer)
+		self.calcTideAndGravKernel.obj:setArg(1, self.planetPosRelEarthBuffer)
+
+		self.gradientKernel = self.clprogramObj:kernel'gradient'
+		self.gradientKernel.obj:setArg(0, self.dforceBuffer)
+		self.gradientKernel.obj:setArg(1, self.forceBuffer)
+
+		self.reduceMin = self.env:reduce{
+			count = self.clvolume,
+			op = |x,y| 'min('..x..', '..y..')',
+			initValue = 'INFINITY',
+			buffer = self.reduceBuffer.obj,
+			swapBuffer = self.reduceSwapBuffer.obj,
+			result = self.reduceResultPtr,
+		}
+
+		self.reduceMax = self.env:reduce{
+			count = self.clvolume,
+			op = |x,y| 'max('..x..', '..y..')',
+			initValue = '-INFINITY',
+			buffer = self.reduceBuffer.obj,
+			swapBuffer = self.reduceSwapBuffer.obj,
+			result = self.reduceResultPtr,
+		}
 	end
-
-	self.reduceBuffer = self.env:buffer{name='reduceBuffer', type='real'}
-	self.reduceSwapBuffer = self.env:buffer{name='reduceSwapBuffer', type='real'}
-	self.reduceResultPtr = ffi.new'real[1]'
-	self.reduceResultPtr[0] = 0
-
-	self.planetPosRelEarthCPUBuf = vector('real4', #Planets.planetClasses)
-	self.planetPosRelEarthBuffer = self.env:buffer{
-		name = 'planetPosRelEarthBuffer',
-		type = 'real4',
-		size = {#Planets.planetClasses},
-	}	-- all planets, including earth, because maybe we want it too.
-
-	self.calcTideAndGravKernel = self.clprogramObj:kernel'calcTideAndGrav'
-	self.calcTideAndGravKernel.obj:setArg(0, self.forceBuffer)
-	self.calcTideAndGravKernel.obj:setArg(1, self.planetPosRelEarthBuffer)
-
-	self.gradientKernel = self.clprogramObj:kernel'gradient'
-	self.gradientKernel.obj:setArg(0, self.dforceBuffer)
-	self.gradientKernel.obj:setArg(1, self.forceBuffer)
-
-	self.reduceMin = self.env:reduce{
-		count = self.clvolume,
-		op = |x,y| 'min('..x..', '..y..')',
-		initValue = 'INFINITY',
-		buffer = self.reduceBuffer.obj,
-		swapBuffer = self.reduceSwapBuffer.obj,
-		result = self.reduceResultPtr,
-	}
-
-	self.reduceMax = self.env:reduce{
-		count = self.clvolume,
-		op = |x,y| 'max('..x..', '..y..')',
-		initValue = '-INFINITY',
-		buffer = self.reduceBuffer.obj,
-		swapBuffer = self.reduceSwapBuffer.obj,
-		result = self.reduceResultPtr,
-	}
 
 	self.gradientTex = GLGradientTex2D(
 		256,
@@ -1361,7 +1379,7 @@ void main() {
 	-- I guess I don't have to, but then I'd have to redo the SmallBody struct,
 	-- which I gotta do anyways ...
 
-	if smallbodies then
+	if smallbodies and self.env then
 		self.smallbodiesCLBuf = self.env:buffer{
 			name = 'bodies',
 			type = 'SmallBody',
@@ -2285,10 +2303,12 @@ App.refreshForceBuffer = |:|do
 		| (vars.calcCrossVel and ffi.C.calcFlags_calcCrossVel or 0)
 		| (vars.calcRadialIntegral and ffi.C.calcFlags_calcRadialIntegral or 0)
 		| (vars.calcSurfaceGradMagn and ffi.C.calcFlags_calcSurfaceGradMagn or 0)
-	if calcFlags == 0 then
+	if calcFlags == 0 or not self.env then
 
 		-- TODO how about I just FBO the forceTex and glClear() it?
-		ffi.fill(self.rescaleForceCPUBuf.v, self.rescaleForceCPUBuf:getNumBytes())
+		if self.rescaleForceCPUBuf then	-- test first since this won't be there if self.env doesn't exist...
+			ffi.fill(self.rescaleForceCPUBuf.v, self.rescaleForceCPUBuf:getNumBytes())
+		end
 		self.forceTex
 			:bind()
 			:subimage()
