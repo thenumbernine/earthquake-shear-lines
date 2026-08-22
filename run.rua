@@ -280,6 +280,7 @@ local vars = table(
 
 		normalizeWeights = true,
 		drawEarth = true,
+		earthAlpha = 1,
 		drawEarthquakes = true,
 		earthquakePointSize = .005,		-- but make it proportional to size in view maybe? like USGS does?
 		drawGreatArcs = true,
@@ -673,7 +674,7 @@ out vec2 texcoordv;
 flat out float deltaJDay;
 flat out uint idv;
 
-uniform mat4 mvProjMat;
+uniform mat4 mvMat, projMat;
 uniform bool chartIs3D;
 uniform vec3 latlonroll0;
 uniform float pointSize;
@@ -725,15 +726,19 @@ void main() {
 	}
 
 
+#if 0	// use chart basis
 	mat3 e = mat3(vec3(0.), vec3(0.), vec3(0.))
 <? for _,name in ipairs(chartCNames) do
 ?>		+ weight_<?=name?> * chart_<?=name?>_basis(vec3(coords.xy, 0.))
 <? end
 ?>	;
+#else	// use modelview basis
+	mat3 e = transpose(mat3(mvMat));
+#endif
 	float magn = latlonrad.z;
 	pos += (vertex.x * e[0] + vertex.y * e[1]) * pointSize * magn;
 
-	gl_Position = mvProjMat * vec4(pos, 1.);
+	gl_Position = projMat * (mvMat * vec4(pos, 1.));
 }
 
 ]], 		{
@@ -2005,6 +2010,11 @@ print("...hasn't been dl'd, dl'ing...")
 	end
 
 	if vars.drawEarth then
+		if vars.earthAlpha ~= 1 then
+			gl.glEnable(gl.GL_BLEND)
+			gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+			gl.glDepthMask(0)
+		end
 		local sceneObj = self.globeObj
 		if type(eq.drapTex) == 'table' then
 			sceneObj.texs[4] = eq.drapTex
@@ -2019,7 +2029,14 @@ print("...hasn't been dl'd, dl'ing...")
 		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		sceneObj.uniforms.forceTexAlpha = vars.forceTexAlpha
 		sceneObj.uniforms.drapTexAlpha = vars.showDrapTex and vars.drapTexAlpha or 0
+		sceneObj.uniforms.alpha = vars.earthAlpha
 		sceneObj:draw()
+		if vars.earthAlpha ~= 1 then
+			gl.glDisable(gl.GL_BLEND)
+			gl.glDepthMask(1)
+		end
+
+		sceneObj.uniforms.alpha = 1
 	end
 
 	do
@@ -2113,7 +2130,8 @@ print("...hasn't been dl'd, dl'ing...")
 		end
 		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
-		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		sceneObj.uniforms.mvMat = self.view.mvMat.ptr
+		sceneObj.uniforms.projMat = self.view.projMat.ptr
 		sceneObj.uniforms.pointSize = vars.earthquakePointSize
 		sceneObj.uniforms.alpha = 1
 		sceneObj.uniforms.hiliteTime = {
@@ -2139,7 +2157,8 @@ print("...hasn't been dl'd, dl'ing...")
 		end
 		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
-		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		sceneObj.uniforms.mvMat = self.view.mvMat.ptr
+		sceneObj.uniforms.projMat = self.view.projMat.ptr
 		sceneObj.uniforms.pointSize = vars.flarePointSize
 		sceneObj.uniforms.alpha = .2
 		sceneObj.uniforms.hiliteTime = {
@@ -2609,6 +2628,7 @@ App.updateGUI = |:| do
 			inputFloat('view znear', self.view, 'znear')
 			inputFloat('view zfar', self.view, 'zfar')
 			ig.luatableCheckbox('draw earth', vars, 'drawEarth')
+			ig.luatableSliderFloat('earth alpha', vars, 'earthAlpha', 0, 1)
 			ig.luatableCheckbox('draw earthquakes', vars, 'drawEarthquakes')
 			inputFloat('earthquakePointSize', vars, 'earthquakePointSize')
 
