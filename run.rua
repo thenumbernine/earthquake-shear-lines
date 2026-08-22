@@ -887,7 +887,8 @@ void main() {
 		vertexCode = template([[
 layout(location=0) in float vertex;
 
-in vec3 axis, axis2, axis3;	// axis dual = basis of circle
+in vec4 axis;	// axis.xyz dual = basis of circle.  axis.w = declinationFromAxis (in radians)
+in vec3 axis2, axis3;
 in vec3 color;	// base color
 //in float influence;	// additive influence,
 in vec4 centerPos;	// .w = cos(centerAngle)
@@ -896,7 +897,6 @@ out vec3 posv;
 out vec4 colorv;
 out flat uint idv;
 
-uniform float declinationFromAxis;	// ... in radians
 uniform float angleFade;	// how much to fade out from the centerPos / centerAngle
 uniform uint idbase;
 
@@ -910,10 +910,11 @@ void main() {
 	idv = uint(gl_InstanceID) + idbase;
 	float theta = vertex * 2. * M_PI;
 
+	float declinationFromAxis = axis.w;	// ... in radians
 	float decl = cos(declinationFromAxis);
 	float phi_r = sin(declinationFromAxis);
 
-	vec3 v = axis * decl + phi_r * (axis2 * cos(theta) + axis3 * sin(theta));
+	vec3 v = axis.xyz * decl + phi_r * (axis2 * cos(theta) + axis3 * sin(theta));
 	float cosAngle = dot(v, centerPos.xyz);
 	float alpha = clamp(cosAngle * centerPos.w + angleFade, 0., 1.);
 	//colorv = vec4(color * influence, alpha);	//influence scalar with additive blending just washes colors to white, so don't use it.
@@ -1028,7 +1029,7 @@ void main() {
 			axis = {
 				divisor = 1,
 				buffer = {
-					dim = 3,
+					dim = 4,
 					useVec = true,
 				},
 			},
@@ -1669,7 +1670,7 @@ App.refreshVisibleCircles = |:| do
 		local centerPosCPU = centerPosGPU:beginUpdate()
 
 		for _,c in ipairs(circles) do
-			axisCPU:emplace_back():set(c.axis:unpack())
+			axisCPU:emplace_back():set(c.axis.x, c.axis.y, c.axis.z, .5 * math.pi)
 			axis2CPU:emplace_back():set(c.axis2:unpack())
 			axis3CPU:emplace_back():set(c.axis3:unpack())
 
@@ -1721,7 +1722,7 @@ App.refreshVisibleCircles = |:| do
 				local planetDir = planetPos:normalize()
 				local axis2 = basisFor(planetDir)
 				local axis3 = planetDir:cross(axis2)
-				axisCPU:emplace_back():set(planetDir:unpack())
+				axisCPU:emplace_back():set(planetDir.x, planetDir.y, planetDir.z, math.rad(declAngle))
 				axis2CPU:emplace_back():set(axis2:unpack())
 				axis3CPU:emplace_back():set(axis3:unpack())
 				colorCPU:emplace_back():set(table.unpack(planetClass.color))
@@ -1752,7 +1753,7 @@ App.refreshVisibleCircles = |:| do
 				local planet = eq.planets[Planets.indexes[planetClass.name]]
 				local axis2 = basisFor(planet.orbitAxis)
 				local axis3 = eq.orbitAxis:cross(axis2)
-				axisCPU:emplace_back():set(planet.orbitAxis)
+				axisCPU:emplace_back():set(planet.orbitAxis.x, planet.orbitAxis.y, planet.orbitAxis.z, .5 * math.pi)
 				axis2CPU:emplace_back():set(axis2:unpack())
 				axis3CPU:emplace_back():set(axis3:unpack())
 				colorCPU:emplace_back():set(table.unpack(planetClass.color))
@@ -1771,7 +1772,7 @@ App.refreshVisibleCircles = |:| do
 			local downxyz = latLonToXYZ(selectSpatialLatLonDown:unpack()):normalize()
 			local axis2 = basisFor(downxyz)
 			local axis3 = downxyz:cross(axis2)
-			axisCPU:emplace_back():set(downxyz)
+			axisCPU:emplace_back():set(downxyz.x, downxyz.y, downxyz.z, math.rad(selectSpatialAngle))	-- why again is this the only radians thing here?
 			axis2CPU:emplace_back():set(axis2:unpack())
 			axis3CPU:emplace_back():set(axis3:unpack())
 			colorCPU:emplace_back():set(0,1,1)	-- TODO pick a color that isn't used by any planets
@@ -2052,7 +2053,6 @@ print("...hasn't been dl'd, dl'ing...")
 		for _,name in ipairs(weightFields) do
 			sceneObj.uniforms[name] = vars[name]
 		end
-		sceneObj.uniforms.declinationFromAxis = .5 * math.pi
 		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
 		sceneObj.uniforms.angleFade = vars.angleFade
 		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
@@ -2071,7 +2071,6 @@ print("...hasn't been dl'd, dl'ing...")
 				if vars.drawPlanets[planetClass.name] then
 					for declAngleIndex,declAngle in ipairs(drawPlanetAngles) do
 						if vars.drawPlanetAngles[declAngle] then
-							sceneObj.uniforms.declinationFromAxis = math.rad(declAngle)
 -- TODO TODO TODO instanceOffset <=> glDrawArraysInstancedBaseInstance doesn't exist in GLES 3.0 <-> WebGL2
 							sceneObj.geometry.instanceOffset = self.circlesObjInstanceCount
 								+ (declAngleIndex - 1)
@@ -2093,7 +2092,6 @@ print("...hasn't been dl'd, dl'ing...")
 				and planetClass.name ~= 'EM_Bary'
 				then
 					if vars.drawPlanets[planetClass.name] then
-						sceneObj.uniforms.declinationFromAxis = .5 * math.pi
 						sceneObj.uniforms.idhi = 5 + planetIndex
 						sceneObj.geometry.instanceOffset = instanceOffset
 						sceneObj:draw()
@@ -2105,7 +2103,6 @@ print("...hasn't been dl'd, dl'ing...")
 			-- last draw the geoselector query
 			if selectSpatialAngle <= 180 then
 				sceneObj.uniforms.idhi = 999
-				sceneObj.uniforms.declinationFromAxis = math.rad(selectSpatialAngle)	-- why again is this the only radians thing here?
 				sceneObj.geometry.instanceOffset = instanceOffset	-- one past orbital plane
 				sceneObj:draw()
 			end
@@ -2698,12 +2695,16 @@ App.updateGUI = |:| do
 			ig.luatableCheckbox('drawAnyPlanets', vars, 'drawAnyPlanets')
 			for _,planetClass in ipairs(drawPlanetClasses) do
 				ig.igSameLine()
-				ig.luatableTooltipCheckbox('draw '..planetClass.name, vars.drawPlanets, planetClass.name)
+				if ig.luatableTooltipCheckbox('draw '..planetClass.name, vars.drawPlanets, planetClass.name) then
+					self:refreshVisibleCircles()
+				end
 			end
 			ig.igText'Show Planet Angles: '
 			for _,angle in ipairs(drawPlanetAngles) do
 				ig.igSameLine()
-				ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle)
+				if ig.luatableTooltipCheckbox('at angle '..angle, vars.drawPlanetAngles, angle) then
+					self:refreshVisibleCircles()
+				end
 			end
 
 			ig.luatableCheckbox('showDrapTex', vars, 'showDrapTex')
