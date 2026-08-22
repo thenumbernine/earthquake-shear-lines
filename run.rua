@@ -307,8 +307,8 @@ local vars = table(
 
 		drawAnyPlanets = true,
 		drawPlanets = drawPlanetClasses:mapi(|c|(
-			true, 		-- draw all
-			--c.name == 'sun' or c.name == 'moon',	-- only draw sun and moon
+			--true, 		-- draw all
+			c.name == 'sun' or c.name == 'moon',	-- only draw sun and moon
 			c.name
 		)),	-- drawPlanets[name] = true
 		calcPlanets = table.mapi(Planets.planetClasses, |c|(
