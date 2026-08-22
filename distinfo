@@ -5,7 +5,7 @@
 name = "earthquake-shear-lines"
 git = "https://github.com/thenumbernine/earthquake-shear-lines"
 startDir = 'earthquake-shear-lines'
-luaArgs = '../langfix/run.lua run.rua'
+luaArgs = '../langfix/run.lua run.rua nocl nosmallbodies'
 
 files = {
 	"README.md",
