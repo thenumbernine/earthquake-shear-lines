@@ -3,6 +3,7 @@
 --------------------------------------------
 
 name = "earthquake-shear-lines"
+git = "https://github.com/thenumbernine/earthquake-shear-lines"
 startDir = 'earthquake-shear-lines'
 luaArgs = '../langfix/run.lua run.rua'
 
@@ -26,6 +27,7 @@ files = {
 	"makeMovie2.sh",
 	"run.rua",
 	"smallbodies.rua",
+	"viz-hist-splat-volume.rua",
 }
 deps = {
 	"cl",
@@ -43,4 +45,6 @@ deps = {
 	"template",
 	"url",
 	"vec-ffi",
+	"socket",	-- luasocket
+	"ssl",		-- ssl
 }
