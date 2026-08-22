@@ -196,7 +196,7 @@ vec2 applyLatLonRoll0Inv(vec2 latlon) {
 
 ]]
 
-local drawPlanetClasses = table.filter(Planets.planetClasses, |c| c.name ~= 'earth' and c.name ~= 'EM_Bary')
+local drawPlanetClasses = table.filteri(Planets.planetClasses, |c| c.name ~= 'earth' and c.name ~= 'EM_Bary')
 -- should I do some geometry-index stuff too or nah?
 local drawPlanetAngles = table{
 	1, 5, 15, 30, 45, 60, 90, 120, 135, 150, 175, 179
@@ -1014,7 +1014,7 @@ void main() {
 	}:useNone()
 
 	local numCircleDivs = 200
-	self.circlesObj = GLSceneObject{
+	local makeCircleObj = || GLSceneObject{
 		program = self.circlesProgram,
 		-- TODO geometry shader the resolution? or can they even spit out that many vertexes?
 		vertexes = {
@@ -1070,6 +1070,11 @@ void main() {
 			},
 		},
 	}
+
+	-- need this for ...
+	self.circlesObj = makeCircleObj()		-- great-arcs
+	self.planetCirclesObj = table.mapi(drawPlanetClasses, |c| (makeCircleObj(), c.name))	-- planet circles
+	self.spatialQueryCircleObj = makeCircleObj()	-- spatial query
 
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
@@ -1655,19 +1660,22 @@ App.refreshVisibleCircles = |:| do
 	end
 
 	-- [[ update the circles
-	do
-		local axisGPU = self.circlesObj.attrs.axis.buffer
+	do	-- geodesics
+		local sceneObj = self.circlesObj
+		local axisGPU = sceneObj.attrs.axis.buffer
+		local axis2GPU = sceneObj.attrs.axis2.buffer
+		local axis3GPU = sceneObj.attrs.axis3.buffer
+		local colorGPU = sceneObj.attrs.color.buffer
+		--local influenceGPU = sceneObj.attrs.influence.buffer
+		local centerPosGPU = sceneObj.attrs.centerPos.buffer
 		local axisCPU = axisGPU:beginUpdate()
-		local axis2GPU = self.circlesObj.attrs.axis2.buffer
 		local axis2CPU = axis2GPU:beginUpdate()
-		local axis3GPU = self.circlesObj.attrs.axis3.buffer
 		local axis3CPU = axis3GPU:beginUpdate()
-		local colorGPU = self.circlesObj.attrs.color.buffer
 		local colorCPU = colorGPU:beginUpdate()
-		--local influenceGPU = self.circlesObj.attrs.influence.buffer
 		--local influenceCPU = influenceGPU:beginUpdate()
-		local centerPosGPU = self.circlesObj.attrs.centerPos.buffer
 		local centerPosCPU = centerPosGPU:beginUpdate()
+
+		sceneObj.uniforms.idhi = 3
 
 		for _,c in ipairs(circles) do
 			axisCPU:emplace_back():set(c.axis.x, c.axis.y, c.axis.z, .5 * math.pi)
@@ -1713,11 +1721,39 @@ App.refreshVisibleCircles = |:| do
 			)
 		end
 
-		self.circlesObjInstanceCount = #axisCPU
+		sceneObj.geometry.instanceCount = #axisCPU
+
+		axisGPU:endUpdate()
+		axis2GPU:endUpdate()
+		axis3GPU:endUpdate()
+		colorGPU:endUpdate()
+		--influenceGPU:endUpdate()
+		centerPosGPU:endUpdate()
+	end
+
+	-- planets
+	for drawPlanetIndex,planetClass in ipairs(drawPlanetClasses) do
+		local sceneObj = self.planetCirclesObj[planetClass.name]
+		local axisGPU = sceneObj.attrs.axis.buffer
+		local axis2GPU = sceneObj.attrs.axis2.buffer
+		local axis3GPU = sceneObj.attrs.axis3.buffer
+		local colorGPU = sceneObj.attrs.color.buffer
+		--local influenceGPU = sceneObj.attrs.influence.buffer
+		local centerPosGPU = sceneObj.attrs.centerPos.buffer
+		local axisCPU = axisGPU:beginUpdate()
+		local axis2CPU = axis2GPU:beginUpdate()
+		local axis3CPU = axis3GPU:beginUpdate()
+		local colorCPU = colorGPU:beginUpdate()
+		--local influenceCPU = influenceGPU:beginUpdate()
+		local centerPosCPU = centerPosGPU:beginUpdate()
+
+		-- TODO convert drawPlanetIndex to planetIndex
+--		sceneObj.uniforms.idhi = 5 + planetIndex
+		sceneObj.uniforms.angleFade = 1
 
 		-- last, make room for each planet, for each angle, for if we draw it
-		for _,planetClass in ipairs(drawPlanetClasses) do
-			for _,declAngle in ipairs(drawPlanetAngles) do
+		for _,declAngle in ipairs(drawPlanetAngles) do
+			if vars.drawPlanetAngles[declAngle] then
 				local planetPos = eq.planets[Planets.indexes[planetClass.name]].pos
 				local planetDir = planetPos:normalize()
 				local axis2 = basisFor(planetDir)
@@ -1731,7 +1767,6 @@ App.refreshVisibleCircles = |:| do
 			end
 		end
 
-		self.numOrbitPlaneCircles = 0
 		--[[ finally finally, orbital plane ... for earth only:
 		do
 			local axis2 = basisFor(eq.orbitAxis)
@@ -1742,29 +1777,50 @@ App.refreshVisibleCircles = |:| do
 			colorCPU:emplace_back():set(1,1,1)
 			centerPosCPU:emplace_back():set(0,0,0,1)
 			--influenceCPU:emplace_back()[0] = 1
-			self.numOrbitPlaneCircles += 1
 		end
 		--]]
 		-- [[ orbiting plane for each planet:
-		for _,planetClass in ipairs(Planets.planetClasses) do
-			if planetClass.name ~= 'earth'
-			and planetClass.name ~= 'EM_Bary'
-			then
-				local planet = eq.planets[Planets.indexes[planetClass.name]]
-				local axis2 = basisFor(planet.orbitAxis)
-				local axis3 = eq.orbitAxis:cross(axis2)
-				axisCPU:emplace_back():set(planet.orbitAxis.x, planet.orbitAxis.y, planet.orbitAxis.z, .5 * math.pi)
-				axis2CPU:emplace_back():set(axis2:unpack())
-				axis3CPU:emplace_back():set(axis3:unpack())
-				colorCPU:emplace_back():set(table.unpack(planetClass.color))
-				--local c = planet.color
-				--colorCPU:emplace_back():set(.5 * c[1], .5 * c[2], .5 * c[3])
-				centerPosCPU:emplace_back():set(0,0,0,1)
-				--influenceCPU:emplace_back()[0] = 1
-				self.numOrbitPlaneCircles += 1
-			end
-		end
+		local planet = eq.planets[Planets.indexes[planetClass.name]]
+		local axis2 = basisFor(planet.orbitAxis)
+		local axis3 = eq.orbitAxis:cross(axis2)
+		axisCPU:emplace_back():set(planet.orbitAxis.x, planet.orbitAxis.y, planet.orbitAxis.z, .5 * math.pi)
+		axis2CPU:emplace_back():set(axis2:unpack())
+		axis3CPU:emplace_back():set(axis3:unpack())
+		colorCPU:emplace_back():set(table.unpack(planetClass.color))
+		--local c = planet.color
+		--colorCPU:emplace_back():set(.5 * c[1], .5 * c[2], .5 * c[3])
+		centerPosCPU:emplace_back():set(0,0,0,1)
+		--influenceCPU:emplace_back()[0] = 1
 		--]]
+
+		sceneObj.geometry.instanceCount = #axisCPU
+
+		axisGPU:endUpdate()
+		axis2GPU:endUpdate()
+		axis3GPU:endUpdate()
+		colorGPU:endUpdate()
+		--influenceGPU:endUpdate()
+		centerPosGPU:endUpdate()
+	end
+
+	do	-- spatial query
+		local sceneObj = self.spatialQueryCircleObj
+		local axisGPU = sceneObj.attrs.axis.buffer
+		local axis2GPU = sceneObj.attrs.axis2.buffer
+		local axis3GPU = sceneObj.attrs.axis3.buffer
+		local colorGPU = sceneObj.attrs.color.buffer
+		--local influenceGPU = sceneObj.attrs.influence.buffer
+		local centerPosGPU = sceneObj.attrs.centerPos.buffer
+		local axisCPU = axisGPU:beginUpdate()
+		local axis2CPU = axis2GPU:beginUpdate()
+		local axis3CPU = axis3GPU:beginUpdate()
+		local colorCPU = colorGPU:beginUpdate()
+		--local influenceCPU = influenceGPU:beginUpdate()
+		local centerPosCPU = centerPosGPU:beginUpdate()
+
+		sceneObj.uniforms.idhi = 999
+		sceneObj.geometry.instanceCount = 1
+		sceneObj.uniforms.angleFade = 1
 
 		-- finally finall finally finally, geospatial query selector
 		-- TODO how about refreshing *ONLY THIS* when we drag the mouse, and not *EVERYTHING*
@@ -2044,78 +2100,64 @@ print("...hasn't been dl'd, dl'ing...")
 
 	do
 		gl.glLineWidth(vars.lineWidth)
-		--gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
-		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
-		gl.glEnable(gl.GL_BLEND)
-		gl.glDepthMask(0)
-
-		local sceneObj = self.circlesObj
-		for _,name in ipairs(weightFields) do
-			sceneObj.uniforms[name] = vars[name]
-		end
-		sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
-		sceneObj.uniforms.angleFade = vars.angleFade
-		sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
-		sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-		sceneObj.uniforms.alpha = vars.greatArcAlpha
 		if vars.drawGreatArcs then
-			sceneObj.geometry.instanceCount = self.circlesObjInstanceCount
+			--gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
+			gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+			gl.glEnable(gl.GL_BLEND)
+			gl.glDepthMask(0)
+
+			local sceneObj = self.circlesObj
+
+			for _,name in ipairs(weightFields) do
+				sceneObj.uniforms[name] = vars[name]
+			end
+			sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
+			sceneObj.uniforms.angleFade = vars.angleFade
+			sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+			sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+			sceneObj.uniforms.alpha = vars.greatArcAlpha
+
 			sceneObj:draw()
+
+			gl.glDisable(gl.GL_BLEND)
 		end
-		gl.glDisable(gl.GL_BLEND)
+
 		if vars.drawAnyPlanets then
 			gl.glLineWidth(3)
-			sceneObj.geometry.instanceCount = 1
-			sceneObj.uniforms.angleFade = 1
-			for planetClassIndex,planetClass in ipairs(drawPlanetClasses) do
-				if vars.drawPlanets[planetClass.name] then
-					for declAngleIndex,declAngle in ipairs(drawPlanetAngles) do
-						if vars.drawPlanetAngles[declAngle] then
--- TODO TODO TODO instanceOffset <=> glDrawArraysInstancedBaseInstance doesn't exist in GLES 3.0 <-> WebGL2
-							sceneObj.geometry.instanceOffset = self.circlesObjInstanceCount
-								+ (declAngleIndex - 1)
-								+ (planetClassIndex - 1) * #drawPlanetAngles
-							sceneObj:draw()
-						end
-					end
-				end
-			end
 
 			-- last draw the orbit plane
-			-- NOTICE FIXME TODO this has to match up with the circlesObj CPU emplace_back order
-			local instanceOffset = self.circlesObjInstanceCount
-				+ #drawPlanetClasses * #drawPlanetAngles
-			-- TODO use instanced geometry to save the index of the planet in the shader as the instance ID?
-			--  for the sake of the picking and the tooltip?
-			for planetIndex,planetClass in ipairs(Planets.planetClasses) do
-				if planetClass.name ~= 'earth'
-				and planetClass.name ~= 'EM_Bary'
-				then
-					if vars.drawPlanets[planetClass.name] then
-						sceneObj.uniforms.idhi = 5 + planetIndex
-						sceneObj.geometry.instanceOffset = instanceOffset
-						sceneObj:draw()
+			for _,planetClass in ipairs(drawPlanetClasses) do
+				if vars.drawPlanets[planetClass.name] then
+					local sceneObj = self.planetCirclesObj[planetClass.name]
+
+					for _,name in ipairs(weightFields) do
+						sceneObj.uniforms[name] = vars[name]
 					end
-					instanceOffset += 1
+					sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
+					sceneObj.uniforms.angleFade = 1
+					sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+					sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+					sceneObj.uniforms.alpha = vars.greatArcAlpha
+
+					sceneObj:draw()
 				end
 			end
 
 			-- last draw the geoselector query
 			if selectSpatialAngle <= 180 then
-				sceneObj.uniforms.idhi = 999
-				sceneObj.geometry.instanceOffset = instanceOffset	-- one past orbital plane
+				local sceneObj = self.spatialQueryCircleObj
+
+				for _,name in ipairs(weightFields) do
+					sceneObj.uniforms[name] = vars[name]
+				end
+				sceneObj.uniforms.latlonroll0 = {vars.lat0, vars.lon0, vars.roll0}
+				sceneObj.uniforms.angleFade = 1
+				sceneObj.uniforms.chartIs3D = false	-- this is just whether to swap x y and z around , z = along view vs z = north pole
+				sceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+				sceneObj.uniforms.alpha = vars.greatArcAlpha
+
 				sceneObj:draw()
 			end
-
-			-- reset the circle idhi to its default of 3 for earthquake geodesics
-			sceneObj.uniforms.idhi = nil
-			sceneObj.program
-				:use()
-				:setUniform('idhi', 3)
-				:useNone()
-
-			sceneObj.geometry.instanceCount = nil
-			sceneObj.geometry.instanceOffset = nil
 		end
 		gl.glDepthMask(1)
 		gl.glLineWidth(1)
