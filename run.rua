@@ -540,6 +540,8 @@ App.initGL = |:| do
 		})
 	end
 
+	local useGeometryShaders = GLProgram.GeometryShader and not cmdline.nogeomshader
+
 	self.globeObj = GLSceneObject{
 		program = {
 			version = 'latest',
@@ -594,8 +596,7 @@ void main() {
 				chartCNames = chartCNames,
 			}),
 
--- [=[
-		geometryCode = [[
+		geometryCode = useGeometryShaders and [[
 layout (triangles) in;
 layout (triangle_strip, max_vertices = 3) out;
 
@@ -640,12 +641,18 @@ void main() {
 
 	EndPrimitive();
 }
-]],
---]=]
+]] or nil,
 
 
-			fragmentCode = template[[
+			fragmentCode = template([[
+<? if useGeometryShaders then ?>
 in vec2 texcoordg;
+#define texcoord texcoordg
+<? else ?>
+in vec2 texcoordv;
+#define texcoord texcoordv
+<? end ?>
+
 layout(location=0) out vec4 fragColor;
 layout(location=2) out vec2 fragLatLon;
 
@@ -661,7 +668,7 @@ uniform float drapTexAlpha;
 uniform float alpha;	// final alpha
 
 void main() {
-	vec2 uv = vec2(texcoordg.x, 1. - texcoordg.y);
+	vec2 uv = vec2(texcoord.x, 1. - texcoord.y);
 	fragColor = texture(earthTex, uv);
 
 	float force = texture(forceTex, uv).r;
@@ -676,11 +683,13 @@ void main() {
 
 	//texcoord is (lat, lon) in [0, 1], so undo it
 	fragLatLon = vec2(
-		(texcoordg.y - .5) * 180.,
-		(texcoordg.x - .5) * 360.
+		(texcoord.y - .5) * 180.,
+		(texcoord.x - .5) * 360.
 	);
 }
-]],
+]],			{
+				useGeometryShaders = useGeometryShaders,
+			}),
 			uniforms = {
 				earthTex = 0,
 				forceTex = 1,
@@ -1006,12 +1015,12 @@ void main() {
 			chartCNames = chartCNames,
 		}),
 
--- [=[ but really just don't use this, just cull the vertexes in the array buffer
+-- but really just don't use this, just cull the vertexes in the array buffer
 -- then again, this does let me split up line loops.
 		-- lets see if we can hide lines that loop from lon=-180 to lon=+180 and go across the equirectangular/mollweide/most 2D projections
 		-- TODO I could use this for the circle tesselation to begin with.  just pass the angle + axis.
 		-- TODO TODO once I do that, I could also just do the cartesian-to-wgs84 in the fragment, then apply the charts in the fragment.
-		geometryCode = [[
+		geometryCode = useGeometryShaders and [[
 layout (lines) in;
 layout (line_strip, max_vertices = 2) out;
 
@@ -1039,12 +1048,20 @@ void main() {
 
 	EndPrimitive();
 }
-]],
---]=]
-		fragmentCode = [[
-in vec4 colorg;		// using geometry shader
-//in vec4 colorv;	// not using geometry shader
+]] or nil,
+
+		fragmentCode = template([[
+<? if useGeometryShaders then ?>
+in vec4 colorg;
 in flat uint idg;
+#define color colorg
+#define id idg
+<? else ?>
+in vec4 colorv;
+in flat uint idv;
+#define color colorv
+#define id idv
+<? end ?>
 
 layout(location=0) out vec4 fragColor;
 layout(location=1) out uvec4 fragID;
@@ -1053,12 +1070,13 @@ uniform float alpha;
 uniform uint idhi;
 
 void main() {
-	fragColor = colorg;
-	//fragColor = colorv;
+	fragColor = color;
 	fragColor.a *= alpha;
-	fragID = uvec4(idg, idhi, 0, 0);
+	fragID = uvec4(id, idhi, 0, 0);
 }
-]],
+]],		{
+			useGeometryShaders = useGeometryShaders,
+		}),
 		uniforms = {
 			idbase = 1,	-- never changes, not needed unless I am going to allow clicking on the planet angle circles
 			idhi = 3,	-- 3 == geodesic lines
