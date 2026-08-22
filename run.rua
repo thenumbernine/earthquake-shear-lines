@@ -360,8 +360,10 @@ App.height = cmdline.height or App.height
 
 local earthquakeWindowStartTime
 local earthquakeWindowEndTime
+
 local earthquakeWindowStartIndex
 local earthquakeWindowEndIndex
+
 local flareWindowStartIndex = 0
 local flareWindowEndIndex = 0
 App.calcQuakeWindowIndexes = |:|do
@@ -380,6 +382,33 @@ App.calcQuakeWindowIndexes = |:|do
 		earthquakeWindowEndIndex = i
 	end
 
+	-- this used to be done just with a glDrawArraysInstancedBaseInstance change-in-arg
+	-- but I regressed to GLES3.0 support for WebGL2 compat's sake
+	do
+		local latlonradGPU = self.earthquakeLatLonPointObj.attrs.latlonrad.buffer
+		local timeGPU = self.earthquakeLatLonPointObj.attrs.time.buffer
+		local latlonradCPU = latlonradGPU:beginUpdate()
+		local timeCPU = timeGPU:beginUpdate()
+		for i=earthquakeWindowStartIndex,earthquakeWindowEndIndex do
+			local eq = earthquakes[i]
+			-- latitude: S = negative, N = positive
+			-- longitude: W = negative, E = positive
+			latlonradCPU:emplace_back():set(
+				eq.latitude,
+				eq.longitude,
+				eq.mag
+			)
+			timeCPU:emplace_back():set(
+				tonumber(eq.ostime & 0xffffffffLL),
+				tonumber((eq.ostime >> 32) & 0xffffffffLL)
+			)
+		end
+		latlonradGPU:endUpdate()
+		timeGPU:endUpdate()
+
+		self.earthquakeLatLonPointObj.geometry.instanceCount = #latlonradCPU
+	end
+
 	if #flares > 0 then
 		flareWindowStartIndex = #flares
 		for i=#flares,1,-1 do
@@ -391,6 +420,29 @@ App.calcQuakeWindowIndexes = |:|do
 			if flares![i]!.ostime > earthquakeWindowEndTime then break end
 			flareWindowEndIndex = i
 		end
+
+		local latlonradGPU = self.flaresLatLonPointObj.attrs.latlonrad.buffer
+		local timeGPU = self.flaresLatLonPointObj.attrs.time.buffer
+		local latlonradCPU = latlonradGPU:beginUpdate()
+		local timeCPU = timeGPU:beginUpdate()
+		for i=flareWindowStartIndex,flareWindowEndIndex do
+			local f = flares[i]
+			-- latitude: S = negative, N = positive
+			-- longitude: W = negative, E = positive
+			latlonradCPU:emplace_back():set(
+				f.latitude,
+				f.longitude,
+				f.magn + 9	-- log10 watts, so A-class flare = -8
+			)
+			timeCPU:emplace_back():set(
+				tonumber(f.ostime & 0xffffffffLL),
+				tonumber((f.ostime >> 32) & 0xffffffffLL)
+			)
+		end
+		latlonradGPU:endUpdate()
+		timeGPU:endUpdate()
+
+		self.flaresLatLonPointObj.geometry.instanceCount = #latlonradCPU
 	end
 
 	local eq = earthquakes![vars.earthquakeIndex]
@@ -859,7 +911,7 @@ void main() {
 	}
 	do
 		local latlonradGPU = self.flaresLatLonPointObj.attrs.latlonrad.buffer
-		local timeGPU = self.earthquakeLatLonPointObj.attrs.time.buffer
+		local timeGPU = self.flaresLatLonPointObj.attrs.time.buffer
 		local latlonradCPU = latlonradGPU:beginUpdate()
 		local timeCPU = timeGPU:beginUpdate()
 		for i,f in ipairs(flares) do
@@ -1748,7 +1800,7 @@ App.refreshVisibleCircles = |:| do
 		local centerPosCPU = centerPosGPU:beginUpdate()
 
 		-- TODO convert drawPlanetIndex to planetIndex
---		sceneObj.uniforms.idhi = 5 + planetIndex
+		sceneObj.uniforms.idhi = 5 + Planets.indexes[planetClass.name]
 		sceneObj.uniforms.angleFade = 1
 
 		-- last, make room for each planet, for each angle, for if we draw it
@@ -2180,11 +2232,7 @@ print("...hasn't been dl'd, dl'ing...")
 			tonumber((eq.ostime >> 32) & 0xffffffffLL)
 		}
 		sceneObj.uniforms.idbase = earthquakeWindowStartIndex		-- because `gl_InstanceID` isn't affected by glDrawArraysInstancedBaseInstance's baseInstance ...
-		sceneObj.geometry.instanceOffset = earthquakeWindowStartIndex - 1
-		sceneObj.geometry.instanceCount = earthquakeWindowEndIndex - earthquakeWindowStartIndex + 1
 		sceneObj:draw()
-		sceneObj.geometry.instanceOffset = nil
-		sceneObj.geometry.instanceCount = nil
 		gl.glDepthFunc(gl.GL_LESS)
 	end
 
@@ -2208,11 +2256,7 @@ print("...hasn't been dl'd, dl'ing...")
 		}
 		sceneObj.uniforms.idbase = flareWindowStartIndex
 		-- TODO also color the flares different or something
-		sceneObj.geometry.instanceOffset = flareWindowStartIndex - 1
-		sceneObj.geometry.instanceCount = flareWindowEndIndex - flareWindowStartIndex + 1
 		sceneObj:draw()
-		sceneObj.geometry.instanceOfffset = nil
-		sceneObj.geometry.instanceCount = nil
 		gl.glDepthMask(1)
 		gl.glDisable(gl.GL_BLEND)
 		gl.glDepthFunc(gl.GL_LESS)
