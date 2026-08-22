@@ -12,6 +12,7 @@ local GLGradientTex2D = require 'gl.gradienttex2d'
 local GLFramebuffer = require 'gl.framebuffer'
 local GLGlobal = require 'gl.global'
 local ig = require 'imgui'
+local vec2i = require 'vec-ffi.vec2i'
 local vec2f = require 'vec-ffi.vec2f'
 local vec2d = require 'vec-ffi.vec2d'
 local vec3d = require 'vec-ffi.vec3d'
@@ -777,7 +778,6 @@ void main() {
 ]],
 		}:useNone()
 
-require 'vec-ffi.vec2i'	-- time
 	self.earthquakeLatLonPointObj = GLSceneObject{
 		program = self.latLonPointShader,
 		vertexes = billboardPointVtxBuf,
@@ -881,12 +881,10 @@ require 'vec-ffi.vec2i'	-- time
 		self.flaresLatLonPointObj.geometry.instanceCount = #latlonradCPU
 	end
 
-	local numCircleDivs = 200
-	self.circlesObj = GLSceneObject{
-		program = {
-			version = 'latest',
-			precision = 'best',
-			vertexCode = template([[
+	self.circlesProgram = GLProgram{
+		version = 'latest',
+		precision = 'best',
+		vertexCode = template([[
 layout(location=0) in float vertex;
 
 in vec3 axis, axis2, axis3;	// axis dual = basis of circle
@@ -950,17 +948,17 @@ void main() {
 	gl_Position = mvProjMat * vec4(pos, 1.);
 	//////// END CODE MATCHING CHART CODE ABOVE
 }
-]],			{
-				chartCode = chartCode,
-				chartCNames = chartCNames,
-			}),
+]],		{
+			chartCode = chartCode,
+			chartCNames = chartCNames,
+		}),
 
 -- [=[ but really just don't use this, just cull the vertexes in the array buffer
 -- then again, this does let me split up line loops.
-			-- lets see if we can hide lines that loop from lon=-180 to lon=+180 and go across the equirectangular/mollweide/most 2D projections
-			-- TODO I could use this for the circle tesselation to begin with.  just pass the angle + axis.
-			-- TODO TODO once I do that, I could also just do the cartesian-to-wgs84 in the fragment, then apply the charts in the fragment.
-			geometryCode = [[
+		-- lets see if we can hide lines that loop from lon=-180 to lon=+180 and go across the equirectangular/mollweide/most 2D projections
+		-- TODO I could use this for the circle tesselation to begin with.  just pass the angle + axis.
+		-- TODO TODO once I do that, I could also just do the cartesian-to-wgs84 in the fragment, then apply the charts in the fragment.
+		geometryCode = [[
 layout (lines) in;
 layout (line_strip, max_vertices = 2) out;
 
@@ -990,7 +988,7 @@ void main() {
 }
 ]],
 --]=]
-			fragmentCode = [[
+		fragmentCode = [[
 in vec4 colorg;		// using geometry shader
 //in vec4 colorv;	// not using geometry shader
 in flat uint idg;
@@ -1008,11 +1006,15 @@ void main() {
 	fragID = uvec4(idg, idhi, 0, 0);
 }
 ]],
-			uniforms = {
-				idbase = 1,	-- never changes, not needed unless I am going to allow clicking on the planet angle circles
-				idhi = 3,	-- 3 == geodesic lines
-			},
+		uniforms = {
+			idbase = 1,	-- never changes, not needed unless I am going to allow clicking on the planet angle circles
+			idhi = 3,	-- 3 == geodesic lines
 		},
+	}:useNone()
+
+	local numCircleDivs = 200
+	self.circlesObj = GLSceneObject{
+		program = self.circlesProgram,
 		-- TODO geometry shader the resolution? or can they even spit out that many vertexes?
 		vertexes = {
 			dim = 1,
