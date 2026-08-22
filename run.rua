@@ -1218,8 +1218,11 @@ void main() {
 				-- for force calcs
 				useGLSharing = self.env.useGLSharing,
 				calcFlagsCode = calcFlagsCode,
-				clsize = self.clsize,
-				WGS84_e = math.sqrt(1. - charts.WGS84.b^2 / charts.WGS84.a^2),
+				forceTexSize = {x=self.clsize[1], y=self.clsize[2]},
+				WGS84_a = charts.WGS84.a,
+				WGS84_b = charts.WGS84.b,
+				WGS84_esq = 1 - charts.WGS84.b^2 / charts.WGS84.a^2,
+				WGS84_e = math.sqrt(1 - charts.WGS84.b^2 / charts.WGS84.a^2),
 				Planets = Planets,		-- whatever size the list the self.planetPosRelEarthBuffer is
 
 				-- for small body calcs:

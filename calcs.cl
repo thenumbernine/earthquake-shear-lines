@@ -8,9 +8,9 @@ real rad(real const d) {
 	return d * M_PI / 180.;
 }
 
-constant const real WGS84_a = 6378137.;		// m
-constant const real WGS84_b = 6356752.3142;	// m @ polar radius
-constant const real WGS84_esq = 1. - WGS84_b * WGS84_b / (WGS84_a * WGS84_a);
+constant const real WGS84_a = <?=clnumber(WGS84_a)?>;		// m
+constant const real WGS84_b = <?=clnumber(WGS84_b)?>;	// m @ polar radius
+constant const real WGS84_esq = <?=clnumber(WGS84_esq)?>;
 constant const real WGS84_e = <?=clnumber(WGS84_e)?>;//sqrt(WGS84_esq); ... but no constexpr in CL .c ... have to upgrade to clcpp but then you need to rope in spirv compiler ... too much drama ...
 constant const real WGS84_flattening = 1. - WGS84_b / WGS84_a;
 constant const real WGS84_inverseFlattening = 298.257223563;
@@ -221,13 +221,13 @@ kernel void calcTideAndGrav(
 	int const calcFlags,
 	int const display
 ) {
-	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
+	initKernelForSize(<?=forceTexSize.x?>, <?=forceTexSize.y?>, 1);
 	// index, x = longitude = east/west, y = latitude = north/south
 
 	// lat lon, x = latitude = north/south, longitude = left/right
 	real4 latlon = (real4)(
-		(real)((i.y + .5) / <?=clnumber(clsize[2])?>) * 180. - 90.,
-		(real)((i.x + .5) / <?=clnumber(clsize[1])?>) * 360. - 180.,
+		(real)((i.y + .5) / <?=clnumber(forceTexSize.y)?>) * 180. - 90.,
+		(real)((i.x + .5) / <?=clnumber(forceTexSize.x)?>) * 360. - 180.,
 		0.,
 		0.
 	);
@@ -247,10 +247,10 @@ kernel void calcTideAndGrav(
 	//spherical coordinates, so theta goes from north pole to south pole, and phi goes around the earth
 	real const rsurf = length(posOnEarth);
 	real const sinTheta = length(posOnEarth.xy) / rsurf;
-	real const dphi = <?=clnumber((2 * math.pi) / clsize[1])?>;
-	real const dtheta = <?=clnumber(math.pi / clsize[2])?>;
-	real const invdphi = <?=clnumber(clsize[1] / (2 * math.pi))?>;
-	real const invdtheta = <?=clnumber(clsize[2] / math.pi)?>;
+	real const dphi = <?=clnumber((2 * math.pi) / forceTexSize.x)?>;
+	real const dtheta = <?=clnumber(math.pi / forceTexSize.y)?>;
+	real const invdphi = <?=clnumber(forceTexSize.x / (2 * math.pi))?>;
+	real const invdtheta = <?=clnumber(forceTexSize.y / math.pi)?>;
 
 	real4 accel;
 	if (calcFlags & calcFlags_calcRadialIntegral) {
@@ -359,11 +359,11 @@ kernel void gradient(
 	global real * const out,
 	global real const * const in
 ) {
-	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
+	initKernelForSize(<?=forceTexSize.x?>, <?=forceTexSize.y?>, 1);
 
 	real4 const latlon = (real4)(
-		(real)((i.y + .5) / <?=clnumber(clsize[2])?>) * 180. - 90.,
-		(real)((i.x + .5) / <?=clnumber(clsize[1])?>) * 360. - 180.,
+		(real)((i.y + .5) / <?=clnumber(forceTexSize.y)?>) * 180. - 90.,
+		(real)((i.x + .5) / <?=clnumber(forceTexSize.x)?>) * 360. - 180.,
 		0.,
 		0.
 	);
@@ -373,35 +373,35 @@ kernel void gradient(
 	//spherical coordinates, so theta goes from north pole to south pole, and phi goes around the earth
 	real const rsurf = length(posOnEarth);
 	real const sinTheta = length(posOnEarth.xy) / rsurf;
-	real const dphi = <?=clnumber((2 * math.pi) / clsize[1])?>;
-	real const dtheta = <?=clnumber(math.pi / clsize[2])?>;
-	real const invdphi = <?=clnumber(clsize[1] / (2 * math.pi))?>;
-	real const invdtheta = <?=clnumber(clsize[2] / math.pi)?>;
+	real const dphi = <?=clnumber((2 * math.pi) / forceTexSize.x)?>;
+	real const dtheta = <?=clnumber(math.pi / forceTexSize.y)?>;
+	real const invdphi = <?=clnumber(forceTexSize.x / (2 * math.pi))?>;
+	real const invdtheta = <?=clnumber(forceTexSize.y / math.pi)?>;
 
 	// spherical phi, not wgs84 phi ... smh
 	int4 ixL = i;
-	ixL.x = (ixL.x + <?=clsize[1]?> - 1) % <?=clsize[1]?>;
-	int const index_xL = indexForInt4ForSize(ixL, <?=clsize[1]?>, <?=clsize[2]?>, 1);
+	ixL.x = (ixL.x + <?=forceTexSize.x?> - 1) % <?=forceTexSize.x?>;
+	int const index_xL = indexForInt4ForSize(ixL, <?=forceTexSize.x?>, <?=forceTexSize.y?>, 1);
 
 	int4 ixR = i;
-	ixR.x = (ixR.x + 1) % <?=clsize[1]?>;
-	int const index_xR = indexForInt4ForSize(ixR, <?=clsize[1]?>, <?=clsize[2]?>, 1);
+	ixR.x = (ixR.x + 1) % <?=forceTexSize.x?>;
+	int const index_xR = indexForInt4ForSize(ixR, <?=forceTexSize.x?>, <?=forceTexSize.y?>, 1);
 
 	int4 iyL = i;
 	iyL.y--;
 	if (iyL.y < 0) {
 		iyL.y = 0;
-		iyL.x = <?=clsize[1]?> - 1 - iyL.x;
+		iyL.x = <?=forceTexSize.x?> - 1 - iyL.x;
 	}
-	int const index_yL = indexForInt4ForSize(iyL, <?=clsize[1]?>, <?=clsize[2]?>, 1);
+	int const index_yL = indexForInt4ForSize(iyL, <?=forceTexSize.x?>, <?=forceTexSize.y?>, 1);
 
 	int4 iyR = i;
 	iyR.y++;
-	if (iyR.y >= <?=clsize[2]?>) {
-		iyR.y = <?=clsize[2]-1?>;
-		iyR.x = <?=clsize[1]?> - 1 - iyR.x;
+	if (iyR.y >= <?=forceTexSize.y?>) {
+		iyR.y = <?=forceTexSize.y-1?>;
+		iyR.x = <?=forceTexSize.x?> - 1 - iyR.x;
 	}
-	int const index_yR = indexForInt4ForSize(iyR, <?=clsize[1]?>, <?=clsize[2]?>, 1);
+	int const index_yR = indexForInt4ForSize(iyR, <?=forceTexSize.x?>, <?=forceTexSize.y?>, 1);
 
 	real const f_xL = in[index_xL];
 	real const f_xR = in[index_xR];
@@ -431,7 +431,7 @@ kernel void rescale(
 	real const minv,
 	real const maxv
 ) {
-	initKernelForSize(<?=clsize[1]?>, <?=clsize[2]?>, 1);
+	initKernelForSize(<?=forceTexSize.x?>, <?=forceTexSize.y?>, 1);
 	float result = (float)((inv[index] - minv) / (maxv - minv));
 <? if useGLSharing then ?>
 	write_imagef(outTex, i.xy, (float4)(result, 0., 0., 0.));
