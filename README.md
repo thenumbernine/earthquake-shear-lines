@@ -1,4 +1,20 @@
-TO CALC:
+[![Donate via Stripe](https://img.shields.io/badge/Donate-Stripe-green.svg)](https://buy.stripe.com/00gbJZ0OdcNs9zi288)<br>
+[![BuyMeACoffee](https://img.shields.io/badge/BuyMeA-Coffee-tan.svg)](https://buymeacoffee.com/thenumbernine)<br>
+
+# Earthquake Geodesic Visualizer
+
+Select a quake and it will show you all geodesics through it and any two other quakes found within some window of time,
+within some angle threshold.
+
+![pic1.png](pics/pic1.png)
+![pic2.png](pics/pic1.png)
+![pic3.png](pics/pic1.png)
+![pic4.png](pics/pic1.png)
+![pic5.png](pics/pic1.png)
+![pic6.png](pics/pic1.png)
+![pic7.png](pics/pic1.png)
+
+STILL TO CALC:
 - graph how many quakes have the sun or moon within 5 degrees ... tighten constraints and test all planets?
 - calculate & graph how many quakes are on geodesics that also go through the sun or moon within .... 1 degree? 0.1 degree? idk?
 - make a graph, per quake, of the falloff of "quakeAlignWithPreviousGeodesicAngleThreshold" - number of geodesics that align with this quake vs the threshold angle size.
@@ -7,7 +23,7 @@ TO CALC:
 - bin graph of angles that the 3 quakes used form a 0.1 degree separation geodesic are apart ... 30 90 120 150 showed up very often
 - graph how often torque radial integral isobars lines up with geodesics ...
 
-TO PROGRAM:
+STILL TO PROGRAM:
 - use bisect method for esarch for time windows in the earthquakes and flares data
 - add LLSVP from somewhere
 - add GRACE GPB ... from somewhere
