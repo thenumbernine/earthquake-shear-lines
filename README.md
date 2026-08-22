@@ -7,12 +7,12 @@ Select a quake and it will show you all geodesics through it and any two other q
 within some angle threshold.
 
 ![pic1.png](pics/pic1.png)
-![pic2.png](pics/pic1.png)
-![pic3.png](pics/pic1.png)
-![pic4.png](pics/pic1.png)
-![pic5.png](pics/pic1.png)
-![pic6.png](pics/pic1.png)
-![pic7.png](pics/pic1.png)
+![pic2.png](pics/pic2.png)
+![pic3.png](pics/pic3.png)
+![pic4.png](pics/pic4.png)
+![pic5.png](pics/pic5.png)
+![pic6.png](pics/pic6.png)
+![pic7.png](pics/pic7.png)
 
 STILL TO CALC:
 - graph how many quakes have the sun or moon within 5 degrees ... tighten constraints and test all planets?
