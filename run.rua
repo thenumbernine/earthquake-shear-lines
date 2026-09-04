@@ -1276,20 +1276,24 @@ void main() {
 
 		if not cmdline.nosmallbodies then
 			smallbodies = require 'smallbodies'.smallbodies
-			smallBodyTypeCode = smallbodies and require 'smallbodies'.smallBodyTypeCode
-			smallbodies_julianResetDay = smallbodies and require'smallbodies'.julianDay
-
-			if ffi.typeof'realsb' == ffi.typeof'double' then
-				clArgRealsb = clArgDouble
-				clArgRealsb4 = |x,y,z,w| do
-					doubleptr[0] = x
-					doubleptr[1] = y
-					doubleptr[2] = z
-					doubleptr[3] = w
-					return {ptr=doubleptr + 0, size=ffi.sizeof'realsb4'}
-				end
+			if not smallbodies then
+				print("WARNING - couldn't find JPL SSD small-bodies file")
 			else
-				error'FIXME'
+				smallBodyTypeCode = smallbodies and require 'smallbodies'.smallBodyTypeCode
+				smallbodies_julianResetDay = smallbodies and require'smallbodies'.julianDay
+
+				if ffi.typeof'realsb' == ffi.typeof'double' then
+					clArgRealsb = clArgDouble
+					clArgRealsb4 = |x,y,z,w| do
+						doubleptr[0] = x
+						doubleptr[1] = y
+						doubleptr[2] = z
+						doubleptr[3] = w
+						return {ptr=doubleptr + 0, size=ffi.sizeof'realsb4'}
+					end
+				else
+					error'FIXME'
+				end
 			end
 		end
 
