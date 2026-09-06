@@ -203,7 +203,7 @@ local drawPlanetAngles = table{
 }
 
 -- this is only used for the ui, while the CL planetPos list has all of them, so that I can indivivdually index into it or something idk
-local calcPlanetClasses = table.filter(Planets.planetClasses, |c| c.name ~= 'EM_Bary')
+local calcPlanetClasses = table.filteri(Planets.planetClasses, |c| c.name ~= 'EM_Bary')
 
 local displayComponentNames = table{
 	'x',
